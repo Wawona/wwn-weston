@@ -85,6 +85,7 @@
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay",
         "wwn-iland": "wwn-iland",
+        "wwn-kmscube": "wwn-kmscube",
         "wwn-toolchain": "wwn-toolchain"
       }
     },
@@ -112,6 +113,27 @@
       "inputs": {
         "nixpkgs": [
           "wwn-iland",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1782530211,
+        "narHash": "sha256-Zn5H2VVMaP79C+bvaUQD+SBXSKoTnURMZGiUrG00zII=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "06ba695dfefc4afc513b49dfc41c4bf0dd2eaeb1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "rust-overlay_3": {
+      "inputs": {
+        "nixpkgs": [
+          "wwn-kmscube",
           "nixpkgs"
         ]
       },
@@ -165,6 +187,33 @@
       "original": {
         "owner": "Wawona",
         "repo": "wwn-iland",
+        "type": "github"
+      }
+    },
+    "wwn-kmscube": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay_3",
+        "wwn-iland": [
+          "wwn-iland"
+        ],
+        "wwn-toolchain": [
+          "wwn-toolchain"
+        ]
+      },
+      "locked": {
+        "lastModified": 1782592071,
+        "narHash": "sha256-I2t2/LMYGTxLWkjRjE3o0wEX/Vve9PQxTo/q3YWedVg=",
+        "owner": "Wawona",
+        "repo": "wwn-kmscube",
+        "rev": "93e74393926bee62d707da0aac7c28555c7cbef3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Wawona",
+        "repo": "wwn-kmscube",
         "type": "github"
       }
     },

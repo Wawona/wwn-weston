@@ -25,7 +25,7 @@
   simulator ? false,
   iosToolchain,
   # When true (default), attempt weston-simple-egl after verifying the iland GL
-  # stack links (kmscube smoke test via iland-gl-clients-ios).
+  # stack links (kmscube smoke test via wwn-kmscube).
   enableGlClients ? false,
   # Injected by wwn-toolchain: apple toolchain (was ../../utils/xcode-wrapper.nix),
   # the wwn-iland source tree (gl-clients + udev/gbm shim copies), and the
@@ -66,9 +66,7 @@ let
   wawonaPty = buildModule.buildForIOS "wawona-pty" { inherit simulator; };
 
   glClients = if enableGlClients then
-    pkgs.callPackage "${ilandSrc}/dependencies/libs/iland/gl-clients-ios.nix" {
-      inherit buildModule simulator iosToolchain;
-    }
+    buildModule.buildForIOS "kmscube" { inherit simulator; }
   else null;
   angle = if enableGlClients then buildModule.buildForIOS "angle" { inherit simulator; } else null;
   iland = if enableGlClients then buildModule.buildForIOS "iland" { inherit simulator; } else null;
@@ -526,7 +524,7 @@ PY
     # Demo clients (main -> <sanitized>_main, hyphens -> underscores)
     GL_CLIENTS_OK=0
     if [ "${if enableGlClients then "1" else "0"}" = "1" ] && [ -n "${glClientsPath}" ] && [ -f "${glClientsPath}/lib/libkmscube.a" ]; then
-      echo "GL stack probe: iland-gl-clients-ios present (kmscube link verified at build time)"
+      echo "GL stack probe: kmscube archive present (link verified at build time)"
       GL_CLIENTS_OK=1
     fi
     for c in ${lib.concatStringsSep " " baseClients}; do

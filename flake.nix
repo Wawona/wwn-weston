@@ -11,9 +11,13 @@
     wwn-iland.url = "github:Wawona/wwn-iland";
     wwn-iland.inputs.nixpkgs.follows = "nixpkgs";
     wwn-iland.inputs.wwn-toolchain.follows = "wwn-toolchain";
+    wwn-kmscube.url = "github:Wawona/wwn-kmscube";
+    wwn-kmscube.inputs.nixpkgs.follows = "nixpkgs";
+    wwn-kmscube.inputs.wwn-toolchain.follows = "wwn-toolchain";
+    wwn-kmscube.inputs.wwn-iland.follows = "wwn-iland";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, wwn-toolchain, wwn-iland, ... }:
+  outputs = { self, nixpkgs, rust-overlay, wwn-toolchain, wwn-iland, wwn-kmscube, ... }:
     let
       darwinSystems = [ "x86_64-darwin" "aarch64-darwin" ];
       linuxSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -76,7 +80,7 @@
           pkgs = pkgsFor system;
           tc = mkToolchains {
             inherit pkgs;
-            registry = baseRegistry // wwn-iland.registryFragment // self.registryFragment;
+            registry = baseRegistry // wwn-iland.registryFragment // wwn-kmscube.registryFragment // self.registryFragment;
             extraArgs = { ilandSrc = wwn-iland; };
           };
           isDarwin = builtins.elem system darwinSystems;
