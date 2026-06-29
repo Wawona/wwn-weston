@@ -125,7 +125,6 @@ EOF
       "-Dc_args=-I${epoll-shim}/include/libepoll-shim -I$PWD/include -include $PWD/include/weston-macos-polyfills.h -Dprogram_invocation_short_name=getprogname() -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME"
       "-Dc_link_args=-L${epoll-shim}/lib -lepoll-shim"
       "-Dcpp_link_args=-L${epoll-shim}/lib -lepoll-shim"
-      "-Ddemo-clients=false"
     )
   '';
   
@@ -136,8 +135,24 @@ EOF
     # Skip building problematic subdirectories (keeping compositor and shells)
     sed -i "/subdir('tests')/d" meson.build
     
-    # Remove subsurfaces client which depends heavily on GLES2
+    # Remove subsurfaces demo client (requires EGL/GLES2; not available on macOS meson build).
     sed -i "/'subsurfaces.c'/d" clients/meson.build
+    python3 <<'PY'
+from pathlib import Path
+import re
+path = Path("clients/meson.build")
+text = path.read_text()
+text, n = re.subn(
+    r"\n\t\{\n\t\t'basename': 'subsurfaces',.*?\n\t\},",
+    "",
+    text,
+    count=1,
+    flags=re.DOTALL,
+)
+if n != 1:
+    raise SystemExit(f"subsurfaces demo client block not removed (n={n})")
+path.write_text(text)
+PY
     
     # Create an empty C file to replace problematic sources while keeping Meson syntax intact
     touch include/empty.c
@@ -514,6 +529,24 @@ EOF
         ln -s "$(basename "$f")" "''${f%.dylib}.so"
       fi
     done
+
+    echo "Verifying required Weston client binaries..."
+    missing=0
+    for id in weston weston-terminal weston-simple-shm \
+              weston-flower weston-clickdot weston-smoke weston-eventdemo \
+              weston-resizor weston-cliptest weston-transformed weston-stacking \
+              weston-dnd weston-image weston-scaler weston-editor weston-constraints; do
+      if [ -f "$out/bin/$id" ]; then
+        echo "✓ $id"
+      else
+        echo "ERROR: missing $out/bin/$id" >&2
+        missing=1
+      fi
+    done
+    if [ ! -f "$out/bin/weston-simple-egl" ]; then
+      echo "○ weston-simple-egl (optional GL client, not built on macOS meson)"
+    fi
+    [ "$missing" -eq 0 ] || exit 1
   '';
 
   meta = with lib; {

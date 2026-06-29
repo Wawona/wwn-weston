@@ -1,9 +1,11 @@
 # Weston real toytoolkit + demo clients, cross-compiled for Android (NDK) as in-process
 # static libraries (mirrors ios.nix; not the old placeholder .so shim).
 #
-# Compiles clients/window.c and cairo/SHM demo clients with the NDK, linking against
-# the cross cairo/pango stack. Each demo `main` is renamed to `<name>_main`. Output
-# archives are static-linked into libwawona.so (whole-archive) at app build time.
+# Output archives (mirrors ios.nix link contract):
+#   libweston-13.a        -> toytoolkit + demo clients (flower_main, etc.)
+#   libweston-terminal.a  -> real clients/terminal.c + wawona-pty spawn
+#   libweston-desktop-13.a-> real clients/desktop-shell.c (fork/exec OK)
+#   libweston-keyboard.a  -> on-screen keyboard (input-method protocol)
 {
   lib,
   stdenv,
@@ -131,6 +133,8 @@ pkgs.stdenv.mkDerivation rec {
     gen_proto text-input-unstable-v1         "$WP/unstable/text-input/text-input-unstable-v1.xml"
     gen_proto text-cursor-position           "protocol/text-cursor-position.xml"
     gen_proto ivi-application                "protocol/ivi-application.xml"
+    gen_proto input-method-unstable-v1       "$WP/unstable/input-method/input-method-unstable-v1.xml"
+    gen_proto weston-desktop-shell           "protocol/weston-desktop-shell.xml"
 
     cat > config.h <<'EOF'
 #ifndef WESTON_CONFIG_H
@@ -196,7 +200,16 @@ EOF
     compile "$WLCURSOR/wayland-cursor.c"
     compile "$WLCURSOR/xcursor.c"
 
-    for p in gen/*-protocol.c; do compile "$p"; done
+    # Protocol private-code for desktop-shell and input-method lives only in
+    # libweston-desktop-13.a / libweston-keyboard.a (mirrors ios.nix + compositor dedupe).
+    for p in gen/*-protocol.c; do
+      case "$(basename "$p")" in
+        weston-desktop-shell-protocol.c|input-method-unstable-v1-protocol.c)
+          continue
+          ;;
+      esac
+      compile "$p"
+    done
     cp clients/window.c clients/mobile-window.c
     cp ${./terminal-patches/patch-window-csd.py} ./patch-window-csd.py
     python3 patch-window-csd.py clients/mobile-window.c clients/window.h
@@ -204,7 +217,7 @@ EOF
 
     for c in ${lib.concatStringsSep " " clients}; do
       sym=$(echo "$c" | tr '-' '_')
-      compile "clients/$c.c" "-Dmain=''${sym}_main"
+      compile "clients/$c.c" -Dmain="''${sym}_main"
     done
 
     cat > weston_main.c <<'EOF'
@@ -231,13 +244,27 @@ EOF
     cp ${wawonaPty}/include/wwn_pty.h ./wwn_pty.h
     python3 patch-terminal.py clients/mobile-terminal.c
     compile clients/mobile-terminal.c "-Dmain=weston_terminal_main" "-I${wawonaPty}/include"
-    "$AR" rcs libweston-terminal.a clients_mobile_terminal_c.o
+    term_obj="$(echo clients/mobile-terminal.c | tr '/.' '__').o"
+    "$AR" rcs libweston-terminal.a "$term_obj"
 
-    cat > weston_desktop_stub.c <<'EOF'
-int wwn_weston_desktop_stub(void) { return 0; }
-EOF
-    "$CC" -c weston_desktop_stub.c -include "$POLYFILLS" $CFLAGS -o weston_desktop_stub.o
-    "$AR" rcs libweston-desktop-13.a weston_desktop_stub.o
+    # Real weston-desktop-shell (fork/exec panel launchers are allowed on Android).
+    echo "CC gen/weston-desktop-shell-protocol.c"
+    "$CC" -c gen/weston-desktop-shell-protocol.c -include "$POLYFILLS" $CFLAGS \
+      -o gen_weston_desktop_shell_protocol_c.o
+    cp clients/desktop-shell.c clients/mobile-desktop-shell.c
+    echo "CC clients/mobile-desktop-shell.c"
+    "$CC" -c clients/mobile-desktop-shell.c -include "$POLYFILLS" $CFLAGS \
+      -Dmain=weston_desktop_shell_main -o clients_mobile_desktop_shell_c.o
+    "$AR" rcs libweston-desktop-13.a gen_weston_desktop_shell_protocol_c.o clients_mobile_desktop_shell_c.o
+
+    # On-screen keyboard client for text-input protocol.
+    echo "CC gen/input-method-unstable-v1-protocol.c"
+    "$CC" -c gen/input-method-unstable-v1-protocol.c -include "$POLYFILLS" $CFLAGS \
+      -o gen_input_method_unstable_v1_protocol_c.o
+    echo "CC clients/keyboard.c"
+    "$CC" -c clients/keyboard.c -include "$POLYFILLS" $CFLAGS \
+      -Dmain=weston_keyboard_main -o clients_keyboard_c.o
+    "$AR" rcs libweston-keyboard.a gen_input_method_unstable_v1_protocol_c.o clients_keyboard_c.o
 
     runHook postBuild
   '';
@@ -247,7 +274,36 @@ EOF
     cp libweston-13.a $out/lib/
     cp libweston-terminal.a $out/lib/
     cp libweston-desktop-13.a $out/lib/
+    cp libweston-keyboard.a $out/lib/
     if [ -d gen ]; then cp -r gen $out/include/weston-gen; fi
+
+    echo "Verifying in-process Weston demo client symbols..."
+    NM="${androidToolchain.androidNdkToolchainBase}/bin/llvm-nm"
+    missing=0
+    for c in ${lib.concatStringsSep " " clients}; do
+      sym="$(echo "$c" | tr '-' '_')_main"
+      obj="clients_''${c}_c.o"
+      if "$NM" -g "$obj" 2>/dev/null | awk '{print $NF}' | grep -Fxq "$sym"; then
+        echo "✓ $sym"
+      else
+        echo "ERROR: missing $sym in $obj" >&2
+        missing=1
+      fi
+    done
+    if ! "$NM" -g libweston-terminal.a 2>/dev/null | awk '{print $NF}' | grep -Fxq weston_terminal_main; then
+      echo "ERROR: missing weston_terminal_main in libweston-terminal.a" >&2
+      missing=1
+    fi
+    if ! "$NM" -g libweston-desktop-13.a 2>/dev/null | awk '{print $NF}' | grep -Fxq weston_desktop_shell_main; then
+      echo "ERROR: missing weston_desktop_shell_main in libweston-desktop-13.a" >&2
+      missing=1
+    fi
+    if ! "$NM" -g libweston-keyboard.a 2>/dev/null | awk '{print $NF}' | grep -Fxq weston_keyboard_main; then
+      echo "ERROR: missing weston_keyboard_main in libweston-keyboard.a" >&2
+      missing=1
+    fi
+    [ "$missing" -eq 0 ] || exit 1
+
     runHook postInstall
   '';
 

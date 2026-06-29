@@ -37,9 +37,8 @@ stdenv.mkDerivation rec {
     # Then handle functions returning int (like main)
     sed -i 's/exit(\([0-9]*\))/return \1/g' $out/clients/simple-shm.c
 
-    # Fix Android NDK bug: sys/select.h (included by unistd.h) needs sigset_t, which is mysteriously blocked. Provide the exact NDK types manually.
-    sed -i 's/#include <unistd.h>/#ifndef __APPLE__\ntypedef unsigned long sigset_t;\ntypedef struct { unsigned long __bits[128\/sizeof(long)]; } sigset64_t;\n#endif\n#include <unistd.h>/g' $out/clients/simple-shm.c
-    sed -i 's/#include <unistd.h>/#ifndef __APPLE__\ntypedef unsigned long sigset_t;\ntypedef struct { unsigned long __bits[128\/sizeof(long)]; } sigset64_t;\n#endif\n#include <unistd.h>/g' $out/shared/os-compatibility.c
+    # sigset_t on Android is supplied by weston-simple-shm/android.nix (-include polyfill).
+    # iOS/macOS SDK already defines sigset_t.
     sed -i 's/mkostemp(tmpname, O_CLOEXEC)/mkstemp(tmpname)/g' $out/shared/os-compatibility.c
 
     # Polyfill linux/input.h constants

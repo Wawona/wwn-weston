@@ -8,6 +8,8 @@
   buildPackages,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  enableIlandDrm ? false,
+  ilandSrc ? null,
   ...
 }:
 
@@ -28,15 +30,30 @@ let
   pcre2 = buildModule.buildForAndroid "pcre2" { };
   libintl = buildModule.buildForAndroid "libintl" { };
 
-  crossDeps = [
-    libwayland xkbcommon pixman cairo pango fontconfig freetype glib harfbuzz
-    fribidi libpng expat libffi pcre2 libintl
-  ];
+  iland =
+    if enableIlandDrm then
+      buildModule.buildForAndroid "iland" { }
+    else
+      null;
+  angle =
+    if enableIlandDrm then
+      buildModule.buildForAndroid "angle" { }
+    else
+      null;
+
+  crossDeps =
+    [
+      libwayland xkbcommon pixman cairo pango fontconfig freetype glib harfbuzz
+      fribidi libpng expat libffi pcre2 libintl
+    ]
+    ++ lib.optionals enableIlandDrm [ iland angle ];
   pkgConfigPath = lib.concatStringsSep ":" (map (d: "${d}/lib/pkgconfig") crossDeps);
   crossPkgConfigDirs = lib.concatStringsSep "', '" (
     (map (d: "${d}/lib/pkgconfig") crossDeps)
     ++ [ "${buildPackages.wayland-protocols}/share/pkgconfig" ]
   );
+
+  androidSignalPolyfill = ./../../toolchains/wwn-android-signal-polyfill.h;
 
   waylandScanner = buildPackages.stdenv.mkDerivation {
     name = "wayland-scanner-host";
@@ -67,7 +84,9 @@ EOF
   };
 
 in
-stdenv.mkDerivation rec {
+# Host stdenv + explicit NDK cross file (same as weston/android.nix). Using
+# pkgsCross stdenv pulls a broken compiler-rt chain on macOS hosts.
+pkgs.stdenv.mkDerivation rec {
   pname = "weston-compositor-android";
   version = "13.0.0";
 
@@ -123,16 +142,11 @@ stdenv.mkDerivation rec {
   buildInputs = [ ];
 
   mesonFlags = [
-    "-Dbackend-drm=false"
-    "-Dbackend-headless=true"
     "-Dbackend-rdp=false"
     "-Dbackend-vnc=false"
     "-Dbackend-pipewire=false"
-    "-Dbackend-wayland=true"
     "-Dbackend-x11=false"
     "-Dxwayland=false"
-    "-Dbackend-default=wayland"
-    "-Drenderer-gl=false"
     "-Dimage-jpeg=false"
     "-Dimage-webp=false"
     "-Ddemo-clients=false"
@@ -149,7 +163,24 @@ stdenv.mkDerivation rec {
     "-Dremoting=false"
     "-Dscreenshare=false"
     "-Dsystemd=false"
-  ];
+    "-Dbackend-headless=true"
+    "-Dbackend-wayland=true"
+  ]
+  ++ (
+    if enableIlandDrm then
+      [
+        "-Dbackend-drm=true"
+        "-Dbackend-default=wayland"
+        "-Drenderer-gl=true"
+        "-Dbackend-drm-screencast-vaapi=false"
+      ]
+    else
+      [
+        "-Dbackend-drm=false"
+        "-Dbackend-default=wayland"
+        "-Drenderer-gl=false"
+      ]
+  );
 
   postPatch = ''
     # Skip tests and client demos (compositor-only static archive)
@@ -233,6 +264,20 @@ PY
     sed -i "s/'libinput-seat.c'/'..\/include\/empty.c'/g" libweston/meson.build
     sed -i "s/'libinput-seat.h'/'..\/include\/empty.c'/g" libweston/meson.build
     sed -i "s/'libinput-device.h'/'..\/include\/empty.c'/g" libweston/meson.build
+
+    cat > include/linux-sync-file-stub.c <<'EOF'
+#include "linux-sync-file.h"
+#include <errno.h>
+bool linux_sync_file_is_valid(int fd) { (void)fd; return false; }
+int weston_linux_sync_file_read_timestamp(int fd, struct timespec *ts)
+{
+	(void)fd;
+	(void)ts;
+	errno = ENOSYS;
+	return -1;
+}
+EOF
+    sed -i "s/'linux-sync-file.c'/'..\/include\/linux-sync-file-stub.c'/g" libweston/meson.build
 
     sed -i "s|message('The default backend is ' + backend_default)|message('Skipping backend validation for mobile compositor build')|g" meson.build
     sed -i "s/dependency('libinput'/dependency('libinput', required: false/g" meson.build
@@ -377,29 +422,27 @@ PY
     # Apple shims (mirror macos.nix)
     mkdir -p include/sys include/libudev include/libinput include/libevdev include/linux include/GLES2 include/EGL include/KHR
 
+    cp ${androidSignalPolyfill} include/wwn-android-signal-polyfill.h
+    test -s include/wwn-android-signal-polyfill.h
+    grep -q _GNU_SOURCE include/wwn-android-signal-polyfill.h
+    grep -q limits.h include/wwn-android-signal-polyfill.h
+
     cat > include/weston-android-polyfills.h <<'EOF'
 #ifndef WESTON_ANDROID_POLYFILLS_H
 #define WESTON_ANDROID_POLYFILLS_H
+#include <sys/types.h>
+#include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#ifndef __aligned_u64
+typedef uint64_t __aligned_u64;
+#endif
+#ifndef WESTON_HOWMANY
 #define WESTON_HOWMANY(x, y) (((int)(x) + (int)(y) - 1) / (int)(y))
-#define SOCK_CLOEXEC 0
-#define SOCK_NONBLOCK 0
-static inline int pipe2(int fds[2], int flags) {
-    if (pipe(fds) != 0) return -1;
-    if (flags & O_CLOEXEC) {
-        fcntl(fds[0], F_SETFD, FD_CLOEXEC);
-        fcntl(fds[1], F_SETFD, FD_CLOEXEC);
-    }
-    if (flags & O_NONBLOCK) {
-        fcntl(fds[0], F_SETFL, O_NONBLOCK);
-        fcntl(fds[1], F_SETFL, O_NONBLOCK);
-    }
-    return 0;
-}
+#endif
 #endif
 EOF
 
@@ -517,8 +560,7 @@ EOF
     cat > include/endian.h <<'EOF'
 #ifndef _ENDIAN_H
 #define _ENDIAN_H
-#include <machine/endian.h>
-#define __BYTE_ORDER BYTE_ORDER
+#include <sys/endian.h>
 #endif
 EOF
 
@@ -531,6 +573,7 @@ EOF
 typedef uint8_t __u8; typedef uint16_t __u16; typedef uint32_t __u32; typedef uint64_t __u64;
 typedef int8_t __s8; typedef int16_t __s16; typedef int32_t __s32; typedef int64_t __s64;
 typedef uint16_t __le16; typedef uint32_t __le32; typedef uint64_t __le64;
+typedef __u64 __aligned_u64;
 #define __user
 #define __BITS_PER_LONG 64
 #endif
@@ -538,7 +581,7 @@ EOF
     cat > include/linux/ioctl.h <<'EOF'
 #ifndef _LINUX_IOCTL_H
 #define _LINUX_IOCTL_H
-#include <sys/ioctl.h>
+#include_next <linux/ioctl.h>
 #endif
 EOF
     cat > include/linux/limits.h <<'EOF'
@@ -580,9 +623,40 @@ typedef unsigned int EGLBoolean;
 #endif
 EOF
     touch include/EGL/eglext.h include/EGL/eglplatform.h include/GLES2/gl2.h include/GLES2/glext.h include/KHR/khrplatform.h
+
+    python3 - <<'PY'
+from pathlib import Path
+import re
+p = Path("meson.build")
+text = p.read_text()
+if "WAWONA_ANDROID_GLOBAL_CFLAGS" not in text:
+    inject = """
+# WAWONA_ANDROID_GLOBAL_CFLAGS
+_android_inc = meson.current_source_dir() / 'include'
+add_project_arguments(
+  '-I' + _android_inc,
+  '-I' + (_android_inc / 'wayland'),
+  '-Dprogram_invocation_short_name=getprogname()',
+  '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC',
+  '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME',
+  language: 'c',
+)
+add_project_arguments('-I' + _android_inc, language: 'cpp')
+
+"""
+    m = re.search(r"^project\('weston'.*?\)\n", text, re.MULTILINE | re.DOTALL)
+    if not m:
+        raise SystemExit("meson.build project() anchor missing")
+    p.write_text(text[: m.end()] + inject + text[m.end() :])
+PY
   '';
 
   preConfigure = ''
+    export CC="${androidToolchain.androidCC}"
+    export CXX="${androidToolchain.androidCXX}"
+    export AR="${androidToolchain.androidAR}"
+    export STRIP="${androidToolchain.androidSTRIP}"
+    export RANLIB="${androidToolchain.androidRANLIB}"
     export PKG_CONFIG_PATH="$PWD/stub-pkgconfig:${waylandScanner}/share/pkgconfig:${pkgConfigPath}"
 
     mkdir -p stub-pkgconfig
@@ -626,8 +700,8 @@ EOF
 
     cat > native-file.txt <<EOF
 [binaries]
-c = '${stdenv.cc}/bin/clang'
-cpp = '${stdenv.cc}/bin/clang++'
+c = '${buildPackages.stdenv.cc}/bin/clang'
+cpp = '${buildPackages.stdenv.cc}/bin/clang++'
 ar = 'ar'
 strip = 'strip'
 pkg-config = '${buildPackages.pkg-config}/bin/pkg-config'
@@ -647,16 +721,16 @@ pkg-config = '${buildPackages.pkg-config}/bin/pkg-config'
 wayland-scanner = '${waylandScanner}/bin/wayland-scanner'
 
 [host_machine]
-system = 'android'
+system = 'linux'
 cpu_family = 'aarch64'
 cpu = 'aarch64'
 endian = 'little'
 
 [built-in options]
-c_args = ['-fPIC', '-D_GNU_SOURCE', '-D_POSIX_C_SOURCE=200809L', '-I$PWD/include', '-I$PWD/include/wayland', '-include', '$PWD/include/weston-android-polyfills.h', '-Dprogram_invocation_short_name=getprogname()', '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC', '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME']
-cpp_args = ['-fPIC', '-D_GNU_SOURCE', '-I$PWD/include']
-c_link_args = ['-L${libffi}/lib', '-lffi']
-cpp_link_args = ['-L${libffi}/lib', '-lffi']
+c_args = ['-include', '$PWD/include/wwn-android-signal-polyfill.h', '-fPIC', '-D_GNU_SOURCE', '-D_POSIX_C_SOURCE=200809L']
+cpp_args = ['-include', '$PWD/include/wwn-android-signal-polyfill.h', '-fPIC', '-D_GNU_SOURCE']
+c_link_args = ['-L${libffi}/lib', '-L${androidToolchain.androidNdkAbiLibDir}', '-lm', '-ldl']
+cpp_link_args = ['-L${libffi}/lib', '-L${androidToolchain.androidNdkAbiLibDir}', '-lm', '-ldl']
 pkg_config_path = ['$PWD/stub-pkgconfig', '${crossPkgConfigDirs}']
 default_library = 'static'
 EOF
@@ -664,7 +738,6 @@ EOF
 
   configurePhase = ''
     runHook preConfigure
-    export PKG_CONFIG_PATH="$PWD/stub-pkgconfig:${waylandScanner}/share/pkgconfig:${pkgConfigPath}"
     meson setup build \
       --prefix=$out \
       --libdir=$out/lib \
@@ -691,11 +764,12 @@ EOF
       exit 1
     fi
 
-    MERGE_DIR=$(mktemp -d)
-    for a in "''${ARCHIVES[@]}"; do
-      ${androidToolchain.androidAR} x "$a" -C "$MERGE_DIR" || exit 1
-    done
-    find "$MERGE_DIR" -name '*.o' -print0 | xargs -0 ${androidToolchain.androidAR} rcs $out/lib/libweston-compositor-13.a
+    mapfile -t OBJECTS < <(find build -name '*.o' -type f | sort)
+    if [ "''${#OBJECTS[@]}" -eq 0 ]; then
+      echo "No object files produced" >&2
+      exit 1
+    fi
+    ${androidToolchain.androidAR} rcs $out/lib/libweston-compositor-13.a "''${OBJECTS[@]}"
 
     cp include/wwn-static-modules.h $out/include/ 2>/dev/null || true
     runHook postInstall

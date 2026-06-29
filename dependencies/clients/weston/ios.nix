@@ -166,6 +166,7 @@ PY
 
   buildPhase = ''
     runHook preBuild
+    set -eo pipefail
 
     if [ -z "''${XCODE_APP:-}" ]; then
       XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode || true)
@@ -369,9 +370,16 @@ PY
 
     objs="$objs $(compile_only ${./wwn-weston-log.c})"
 
-    # Generated protocol private-code lives in libweston-compositor-13.a when the
-    # nested compositor is linked; compiling gen/* here duplicates wl_interface
-    # symbols at final link time.
+    # Protocol private-code for shell/keyboard lives in libweston-desktop-13.a /
+    # libweston-keyboard.a; the rest must be in libweston-13.a for demo clients.
+    for p in gen/*-protocol.c; do
+      case "$(basename "$p")" in
+        weston-desktop-shell-protocol.c|input-method-unstable-v1-protocol.c)
+          continue
+          ;;
+      esac
+      compile "$p"
+    done
 
     # Toytoolkit core — on Apple mobile, connect via inherited socket fd instead
     # of WAYLAND_SOCKET env (setenv is unreliable in the iOS app sandbox).
@@ -529,12 +537,12 @@ PY
     fi
     for c in ${lib.concatStringsSep " " baseClients}; do
       sym=$(echo "$c" | tr '-' '_')
-      compile "clients/$c.c" "-Dmain=''${sym}_main"
+      compile "clients/$c.c" -Dmain="''${sym}_main"
     done
     if [ "$GL_CLIENTS_OK" = "1" ]; then
       sym=simple_egl
       echo "CC clients/simple-egl.c (iland GL stack)"
-      compile "clients/simple-egl.c" "-Dmain=''${sym}_main ${glIncludeFlags}" || {
+      compile "clients/simple-egl.c" -Dmain="''${sym}_main" ${glIncludeFlags} || {
         echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
       }
     fi
@@ -580,7 +588,7 @@ PY
     # --- weston-desktop-shell -> libweston-desktop-13.a ---
     # Tablet/xdg/text-input protocols live in libweston-13.a; only add shell-specific protocol.
     desktop_objs="$(compile_only gen/weston-desktop-shell-protocol.c)"
-    if [ "${toString mobile.isTVOS}" = "true" ] || [ "${toString mobile.isWatchOS}" = "true" ]; then
+    if [ "${if mobile.isTVOS then "1" else "0"}" = "1" ] || [ "${if mobile.isWatchOS then "1" else "0"}" = "1" ]; then
       cp ${./mobile-desktop-shell-stub.c} ./mobile-desktop-shell-stub.c
       desktop_objs="$desktop_objs $(compile_only mobile-desktop-shell-stub.c -Dmain=weston_desktop_shell_main)"
     else
@@ -895,6 +903,26 @@ PY
     cp libweston-keyboard.a $out/lib/
     cp wwn-mobile-clients.h $out/include/
     cp -r gen $out/include/weston-gen || true
+
+    echo "Verifying in-process Weston demo client symbols in libweston-13.a..."
+    missing=0
+    weston_syms="$(nm -gj libweston-13.a 2>/dev/null || true)"
+    for sym in flower_main clickdot_main smoke_main eventdemo_main resizor_main \
+               cliptest_main transformed_main stacking_main dnd_main image_main \
+               scaler_main editor_main constraints_main; do
+      if echo "$weston_syms" | grep -Fx "_''${sym}" >/dev/null; then
+        echo "✓ $sym"
+      else
+        echo "ERROR: missing $sym in libweston-13.a" >&2
+        missing=1
+      fi
+    done
+    term_syms="$(nm -gj libweston-terminal.a 2>/dev/null || true)"
+    if ! echo "$term_syms" | grep -Fx "_weston_terminal_main" >/dev/null; then
+      echo "ERROR: missing weston_terminal_main in libweston-terminal.a" >&2
+      missing=1
+    fi
+    [ "$missing" -eq 0 ] || exit 1
   '';
 
   meta = with lib; {

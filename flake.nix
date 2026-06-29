@@ -56,7 +56,7 @@
           macos = null;
         };
         weston-compositor-drm = withPlatformVariants {
-          android = null;
+          android = westonDir + "/compositor-android-drm.nix";
           ios = westonDir + "/compositor-ios-drm.nix";
           tvos = null;
           ipados = westonDir + "/compositor-ios-drm.nix";
@@ -65,7 +65,7 @@
           macos = null;
         };
         weston-simple-shm = withPlatformVariants {
-          android = null;
+          android = shmDir + "/android.nix";
           ios = shmDir + "/ios.nix";
           tvos = shmDir + "/tvos.nix";
           ipados = shmDir + "/ios.nix";
