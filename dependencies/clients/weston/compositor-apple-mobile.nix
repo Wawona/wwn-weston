@@ -1203,6 +1203,24 @@ EOF
       find "$MERGE_DIR" -name "$pattern" -delete
     done
 
+    # libweston-13.a (weston-ios) embeds client-side private-code for demo clients.
+    # Drop matching protocol glue objects from the compositor fat archive so force_load
+    # of both libraries does not duplicate wl_interface symbols. Server implementation
+    # TUs (e.g. desktop_xdg-shell.c.o) are kept.
+    for pattern in \
+      '*weston-desktop-shell-protocol*.o' \
+      '*input-method-unstable-v1-protocol*.o' \
+      '*xdg-shell-protocol*.o' \
+      '*viewporter-protocol*.o' \
+      '*presentation-time-protocol*.o' \
+      '*relative-pointer-unstable-v1-protocol*.o' \
+      '*pointer-constraints-unstable-v1-protocol*.o' \
+      '*tablet-unstable-v2-protocol*.o' \
+      '*text-input-unstable-v1-protocol*.o' \
+      '*text-cursor-position-protocol*.o'; do
+      find "$MERGE_DIR" -name "$pattern" -delete
+    done
+
     dedupe_protocol_suffix() {
       local suffix="$1"
       mapfile -t matches < <(find "$MERGE_DIR" -name "*$suffix*.o" | sort)
@@ -1211,19 +1229,10 @@ EOF
       fi
     }
     for suffix in \
-      xdg-shell-protocol \
       xdg-shell-unstable-v6-protocol \
       xdg-output-unstable-v1-protocol \
       presentation; do
       dedupe_protocol_suffix "$suffix"
-    done
-
-    # libweston-desktop-13.a and libweston-keyboard.a (force-loaded by the app target)
-    # already provide these wl_interface symbols; drop them from the compositor archive.
-    for pattern in \
-      '*weston-desktop-shell-protocol*.o' \
-      '*input-method-unstable-v1-protocol*.o'; do
-      find "$MERGE_DIR" -name "$pattern" -delete
     done
 
     find "$MERGE_DIR" -name '*.o' -print0 | xargs -0 ar rcs $out/lib/libweston-compositor-13.a
