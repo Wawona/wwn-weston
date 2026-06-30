@@ -533,7 +533,50 @@ text = meson.read_text()
 if "'wwn-weston-log.c'" not in text:
     text = text.replace("\t'main.c',", "\t'main.c',\n\t'wwn-weston-log.c',", 1)
     meson.write_text(text)
-print("patched macOS weston log init")
+
+compositor = Path("libweston/compositor.c")
+text = compositor.read_text()
+helper = """
+static const char *
+wwn_effective_module_dir(const char *module_dir)
+{
+	const char *backend_env;
+	const char *module_env;
+
+	if (!module_dir)
+		return module_dir;
+
+	backend_env = getenv("WESTON_BACKEND_DIR");
+	module_env = getenv("WESTON_MODULE_DIR");
+
+	if (strstr(module_dir, "libweston") != NULL) {
+		if (backend_env && backend_env[0])
+			return backend_env;
+	} else if (strstr(module_dir, "weston") != NULL) {
+		if (module_env && module_env[0])
+			return module_env;
+	}
+	return module_dir;
+}
+
+"""
+if "wwn_effective_module_dir" not in text:
+    anchor = "WL_EXPORT void *\nweston_load_module(const char *name, const char *entrypoint,"
+    if anchor not in text:
+        raise SystemExit("libweston/compositor.c: weston_load_module anchor missing")
+    text = text.replace(anchor, helper + anchor, 1)
+    old = "\tvoid *module, *init;\n\tsize_t len;\n\n\tif (name == NULL)"
+    new = (
+        "\tvoid *module, *init;\n\tsize_t len;\n\n"
+        "\tmodule_dir = wwn_effective_module_dir(module_dir);\n\n"
+        "\tif (name == NULL)"
+    )
+    if old not in text:
+        raise SystemExit("libweston/compositor.c: weston_load_module body anchor missing")
+    text = text.replace(old, new, 1)
+    compositor.write_text(text)
+
+print("patched macOS weston log init + bundled module dirs")
 PY
   '';
 
