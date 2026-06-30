@@ -38,7 +38,7 @@ REQUIRED_TERMINAL_PATCH_MARKERS = [
 ]
 
 REQUIRED_PTY_MARKERS = [
-    "ios_shell_echo_fd",
+    "dup2(app_log_fd, STDERR_FILENO)",
     "ios_pty_input_write",
     "wwn_ios_terminal_inject",
     "wawona_zsh_main",
