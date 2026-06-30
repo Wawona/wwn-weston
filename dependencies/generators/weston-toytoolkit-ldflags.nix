@@ -1,7 +1,7 @@
 # Link flags for the cross-compiled weston toytoolkit (cairo/pango stack) consumed
 # by libweston-13.a on Apple mobile and Android targets. Pass the platform's
 # nativeDeps attrset from flake.nix.
-{ lib, deps, forceLoadWeston ? false, linkMode ? "force_load" }:
+{ lib, deps, forceLoadWeston ? false, linkMode ? "force_load", linkWestonSimpleShm ? true }:
 
 let
   strip = d: if d == null then "" else toString d;
@@ -82,12 +82,11 @@ let
     let
       shmDir = strip (deps."weston-simple-shm" or null);
     in
-    if shmDir != "" && builtins.pathExists "${shmDir}/lib/libweston_simple_shm.a" then
-      if linkMode == "whole_archive" then
-        [ "-Wl,--whole-archive" "${shmDir}/lib/libweston_simple_shm.a" "-Wl,--no-whole-archive" ]
-      else
-        [ "-force_load" "${shmDir}/lib/libweston_simple_shm.a" ]
+    if !linkWestonSimpleShm || shmDir == "" || !builtins.pathExists "${shmDir}/lib/libweston_simple_shm.a" then
+      [ ]
+    else if linkMode == "whole_archive" then
+      [ "-Wl,--whole-archive" "${shmDir}/lib/libweston_simple_shm.a" "-Wl,--no-whole-archive" ]
     else
-      [ ];
+      [ "-force_load" "${shmDir}/lib/libweston_simple_shm.a" ];
 in
 libPaths ++ westonArchives ++ wawonaPtyArchive ++ westonSimpleShmArchive ++ libs
