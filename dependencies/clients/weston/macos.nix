@@ -519,6 +519,42 @@ EOF
 #define drmGetFormatModifierVendor(m) "INVALID"
 #endif
 EOF
+
+    # Weston 13 abort()s loading wayland-backend.so if weston_log_set_handler was
+    # not installed before wet_main logs "Loading module …" (default handler aborts).
+    cp ${./wwn-weston-log.c} compositor/wwn-weston-log.c
+    python3 <<'PY'
+from pathlib import Path
+
+main = Path("compositor/main.c")
+text = main.read_text()
+if "wwn_weston_client_log_init" not in text:
+    anchor = "int main("
+    idx = text.find(anchor)
+    if idx < 0:
+        raise SystemExit("compositor/main.c: main() not found")
+    body = text.find("{", idx)
+    if body < 0:
+        raise SystemExit("compositor/main.c: main() body not found")
+    text = (
+        text[: body + 1]
+        + "\n\twwn_weston_client_log_init();\n"
+        + text[body + 1 :]
+    )
+    prelude = "extern void wwn_weston_client_log_init(void);\n"
+    if prelude.strip() not in text:
+        inc = text.rfind("#include")
+        line_end = text.find("\n", inc)
+        text = text[: line_end + 1] + prelude + text[line_end + 1 :]
+    main.write_text(text)
+
+meson = Path("compositor/meson.build")
+text = meson.read_text()
+if "'wwn-weston-log.c'" not in text:
+    text = text.replace("\t'main.c',", "\t'main.c',\n\t'wwn-weston-log.c',", 1)
+    meson.write_text(text)
+print("patched macOS weston log init")
+PY
   '';
 
   postInstall = ''

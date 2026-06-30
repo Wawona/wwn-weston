@@ -64,3 +64,11 @@ wwn_weston_client_log_init(void)
 	weston_log_set_handler(wwn_client_vlog, wwn_client_vlog);
 	installed = 1;
 }
+
+/* Run before main / backend dlopen so "Loading module …" can weston_log(). */
+__attribute__((constructor))
+static void
+wwn_weston_log_constructor(void)
+{
+	wwn_weston_client_log_init();
+}
