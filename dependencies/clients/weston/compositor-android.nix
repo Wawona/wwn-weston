@@ -8,6 +8,7 @@
   buildPackages,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox,
   enableIlandDrm ? false,
   ilandSrc ? null,
   ...
@@ -86,7 +87,7 @@ EOF
 in
 # Host stdenv + explicit NDK cross file (same as weston/android.nix). Using
 # pkgsCross stdenv pulls a broken compiler-rt chain on macOS hosts.
-pkgs.stdenv.mkDerivation rec {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply rec {
   pname = "weston-compositor-android";
   version = "13.0.0";
 
@@ -781,4 +782,4 @@ EOF
     license = licenses.mit;
     platforms = platforms.linux;
   };
-}
+})
