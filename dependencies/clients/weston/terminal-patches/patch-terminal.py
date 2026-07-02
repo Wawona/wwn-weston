@@ -7,6 +7,37 @@ import sys
 from pathlib import Path
 
 
+def patch_ios_lf_newline(src: str) -> str:
+    """LF without CR must return to column 0 on Apple mobile fake PTY output.
+
+    Upstream weston-terminal only resets the cursor column on \\n when
+    MODE_LF_NEWLINE (DEC LNM) is set. Shell stdout on iOS uses \\n only
+    (zsh clears ONLCR in raw/ZLE mode), so each line kept the previous
+    column and looked progressively indented.
+    """
+    marker = "patch_ios_lf_newline"
+    if marker in src:
+        return src
+    old = """\tcase '\\n':
+\t\tif (terminal->mode & MODE_LF_NEWLINE) {
+\t\t\tterminal->column = 0;
+\t\t}
+\t\t/* fallthrough */"""
+    new = """\tcase '\\n':
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t\t/* patch_ios_lf_newline: fake PTY shell output uses LF-only newlines */
+\t\tterminal->column = 0;
+#else
+\t\tif (terminal->mode & MODE_LF_NEWLINE) {
+\t\t\tterminal->column = 0;
+\t\t}
+#endif
+\t\t/* fallthrough */"""
+    if old not in src:
+        raise SystemExit("handle_special_char LF newline anchor missing in terminal.c")
+    return src.replace(old, new, 1)
+
+
 def patch_ios_terminal_master(src: str) -> str:
     old = "\tterminal->master = master;\n\tterminal->pace_pipe = pipes[1];"
     new = """\tterminal->master = master;
@@ -1407,6 +1438,7 @@ def main() -> None:
     path = Path(sys.argv[1])
     src = path.read_text()
     src = patch_howmany_and_title(src)
+    src = patch_ios_lf_newline(src)
     src = patch_ios_spawn(src)
     src = patch_ios_pty_poll_field(src)
     src = patch_ios_pty_poll(src)

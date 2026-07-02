@@ -35,6 +35,8 @@ REQUIRED_TERMINAL_PATCH_MARKERS = [
     "patch_ios_max_escape",
     'new = "#define MAX_ESCAPE',
     "wwn_ios_terminal_inject(data, length)",
+    "patch_ios_lf_newline",
+    "patch_ios_lf_newline: fake PTY shell output uses LF-only newlines",
 ]
 
 REQUIRED_PTY_MARKERS = [
