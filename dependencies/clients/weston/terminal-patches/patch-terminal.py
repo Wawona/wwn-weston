@@ -701,9 +701,29 @@ def patch_ios_redraw_show_text(src: str) -> str:
 
 
 def patch_ios_redraw_visible_fg(src: str) -> str:
-    """Force light glyph color; indexed attrs often resolve to black on iOS."""
-    if "cairo_set_source_rgb(cr, 0.92, 0.92, 0.92)" in src:
+    """Lift palette black (fg 0) on dark bg; keep ANSI colors for fastfetch etc."""
+    conditional = (
+        "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
+        "#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)\n"
+        "\t\t\tif (attr.attr.fg == 0)\n"
+        "\t\t\t\tcairo_set_source_rgb(cr, 0.92, 0.92, 0.92);\n"
+        "#endif\n"
+        "\t\t\tcairo_move_to(cr, text_x, text_y);\n"
+        "\t\t\tcairo_show_text(cr, scratch);"
+    )
+    if conditional in src:
         return src
+
+    # Upgrade older blanket-gray override (killed all ANSI colors).
+    blanket = (
+        "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
+        "\t\t\tcairo_set_source_rgb(cr, 0.92, 0.92, 0.92);\n"
+        "\t\t\tcairo_move_to(cr, text_x, text_y);\n"
+        "\t\t\tcairo_show_text(cr, scratch);"
+    )
+    if blanket in src:
+        return src.replace(blanket, conditional, 1)
+
     old_ios = (
         "\t\t\tcairo_set_scaled_font(cr, cell_font);\n"
         "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
@@ -712,27 +732,11 @@ def patch_ios_redraw_visible_fg(src: str) -> str:
     )
     new_ios = (
         "\t\t\tcairo_set_scaled_font(cr, cell_font);\n"
-        "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
-        "\t\t\tcairo_set_source_rgb(cr, 0.92, 0.92, 0.92);\n"
-        "\t\t\tcairo_move_to(cr, text_x, text_y);\n"
-        "\t\t\tcairo_show_text(cr, scratch);"
+        + conditional
     )
     if old_ios in src:
         src = src.replace(old_ios, new_ios, 1)
-    old = (
-        "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
-        "\t\t\tcairo_move_to(cr, text_x, text_y);\n"
-        "\t\t\tcairo_show_text(cr, scratch);"
-    )
-    new = (
-        "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
-        "\t\t\tcairo_set_source_rgb(cr, 0.92, 0.92, 0.92);\n"
-        "\t\t\tcairo_move_to(cr, text_x, text_y);\n"
-        "\t\t\tcairo_show_text(cr, scratch);"
-    )
-    if old in src:
-        src = src.replace(old, new, 1)
-    if "cairo_set_source_rgb(cr, 0.92, 0.92, 0.92)" not in src:
+    elif conditional not in src:
         raise SystemExit("ios redraw visible fg anchor missing in terminal.c")
     return src
 

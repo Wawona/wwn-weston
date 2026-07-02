@@ -29,6 +29,7 @@ REQUIRED_TERMINAL_PATCH_MARKERS = [
     "defer shell unblock",
     "wwn_pty_ios_signal_shells();",
     "wwn_term_log_enabled",
+    "if (attr.attr.fg == 0)",
     "cairo_set_source_rgb(cr, 0.92, 0.92, 0.92)",
     "cairo_set_source_rgb(cr, 0.12, 0.12, 0.14)",
     "scheduled initial redraw",
