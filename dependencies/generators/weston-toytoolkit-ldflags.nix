@@ -55,10 +55,14 @@ let
           [ ];
     in
     if existingArchives == [ ] then
-      [
+      # Dylib fallback (macOS): only link libs the weston output actually
+      # ships. Newer macOS weston merges libweston-desktop into libweston-13
+      # and provides weston-terminal as a standalone binary, so the desktop/
+      # terminal dylibs may not exist.
+      lib.filter (s: s != "") [
         "-lweston-13"
-        "-lweston-desktop-13"
-        "-lweston-terminal"
+        (if builtins.pathExists "${westonLibDir}/libweston-desktop-13.dylib" then "-lweston-desktop-13" else "")
+        (if builtins.pathExists "${westonLibDir}/libweston-terminal.dylib" then "-lweston-terminal" else "")
       ]
     else if linkMode == "whole_archive" then
       [
