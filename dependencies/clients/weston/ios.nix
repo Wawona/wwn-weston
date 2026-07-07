@@ -551,19 +551,52 @@ PY
     shm_src="weston-simple-shm-patched.c"
     cp "${westonSimpleShmSrc}/clients/simple-shm.c" "$shm_src"
     chmod u+w "$shm_src"
-    # constraints already defines struct wl_shm_listener shm_listener.
+
+    # Resolve the duplicate shm_listener symbol conflict by renaming the
+    # simple-shm copy to wwn_simple_shm_listener via macro rather than making
+    # it extern (which produces an unresolvable external reference because the
+    # definition in window.c / constraints.c is static).
+    #
+    # Also inject the iOS/Apple mobile in-process roundtrip/dispatch wrappers
+    # so wl_display_roundtrip and wl_display_dispatch pump the host compositor
+    # event loop correctly when running in the same process as Wawona.
     python3 <<'PY'
 from pathlib import Path
+
 path = Path("weston-simple-shm-patched.c")
 text = path.read_text()
-needle = "struct wl_shm_listener shm_listener"
-start = text.index(needle)
-end = text.index("};", start) + 2
-path.write_text(text[:start] + "extern struct wl_shm_listener shm_listener;\n\n" + text[end:].lstrip())
+
+# 1. Rename shm_listener -> wwn_simple_shm_listener to avoid duplicate symbol
+#    with the window.c/constraints.c definition that is compiled into the same
+#    archive.  We use a #define so all declarations and uses are renamed
+#    automatically without needing to know each call site.
+if "wwn_simple_shm_listener" not in text and "shm_listener" in text:
+    text = "#define shm_listener wwn_simple_shm_listener\n" + text
+
+# 2. Inject the iOS mobile-client header + macros so that wl_display_roundtrip
+#    and wl_display_dispatch pump the host compositor event loop.  Without
+#    this, these calls block on a socket that the host compositor (also
+#    in-process) never reads, causing a deadlock / crash on iOS.
+mobile_block = """
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH
+#include "wwn-mobile-clients.h"
+#define wl_display_roundtrip(d) wwn_mobile_display_roundtrip(d)
+#define wl_display_dispatch(d)  wwn_mobile_display_dispatch(d)
+#endif
+#endif
+"""
+anchor = "#include <wayland-client.h>"
+if anchor in text and "wwn-mobile-clients.h" not in text:
+    text = text.replace(anchor, anchor + mobile_block, 1)
+
+path.write_text(text)
 PY
     shm_obj="clients_simple_shm_patched_c.o"
     if "$CLANG" -c "$shm_src" $CFLAGS \
       -I${westonSimpleShmSrc} \
+      -I. \
       -o "$shm_obj"; then
       objs="$objs $shm_obj"
     else

@@ -23,8 +23,21 @@ window_get_geometry(struct window *window, struct rectangle *geometry)
     new = """static void
 window_get_geometry(struct window *window, struct rectangle *geometry)
 {
+	/*
+	 * frame_input_rect() only excludes the drop shadow (shadow_margin),
+	 * leaving the painted border + titlebar inside the reported xdg
+	 * window geometry. window_sync_geometry() below runs on every
+	 * redraw/commit and calls xdg_surface_set_window_geometry() with
+	 * whatever this returns, so using frame_input_rect() here makes the
+	 * compositor composite the client's border/titlebar chrome as if it
+	 * were real content: the CSD border stays visible and cropping is
+	 * off by the border width + titlebar height on every side.
+	 * frame_interior() is the actual innermost content rect (border,
+	 * titlebar, and shadow all excluded); use that so the compositor
+	 * crops exactly the same region the client draws its content into.
+	 */
 	if (window->frame && !window->fullscreen)
-		frame_input_rect(window->frame->frame,
+		frame_interior(window->frame->frame,
 				 &geometry->x,
 				 &geometry->y,
 				 &geometry->width,
@@ -56,12 +69,28 @@ window_set_content_geometry(struct window *window, int32_t x, int32_t y,
 			    int32_t width, int32_t height)
 {
 	struct rectangle geometry;
+	int32_t frame_x = 0, frame_y = 0;
 
 	if (!window->xdg_surface || width <= 0 || height <= 0)
 		return;
 
-	geometry.x = x;
-	geometry.y = y;
+	/*
+	 * x/y/width/height here are relative to the *child* widget's own
+	 * content area (e.g. weston-terminal's cell-grid inset), not the
+	 * decorated window buffer as a whole. xdg_surface_set_window_geometry()
+	 * is defined in surface-local coordinates, i.e. relative to the top
+	 * left of the CSD buffer that also contains the border/titlebar/drop
+	 * shadow drawn by frame_repaint(). Without adding the frame's own
+	 * interior offset here, the compositor crops only the caller's small
+	 * child-relative inset and leaves the border/titlebar/shadow visible
+	 * as part of the "content" it composites.
+	 */
+	if (window->frame)
+		frame_interior(window->frame->frame, &frame_x, &frame_y,
+				NULL, NULL);
+
+	geometry.x = frame_x + x;
+	geometry.y = frame_y + y;
 	geometry.width = width;
 	geometry.height = height;
 

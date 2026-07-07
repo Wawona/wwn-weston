@@ -190,9 +190,16 @@ EOF
       objs+=("$obj")
     }
 
+    # frame_create loads PNGs from WESTON_DATA_DIR; tolerate missing assets on
+    # Android so clients degrade to 1×1 placeholders instead of SIGSEGV.
+    cp shared/frame.c shared/mobile-frame.c
+    cp ${./terminal-patches/patch-frame-mobile.py} ./patch-frame-mobile.py
+    python3 patch-frame-mobile.py shared/mobile-frame.c
+
     for s in shared/config-parser.c shared/option-parser.c shared/signal.c \
              shared/file-util.c shared/os-compatibility.c shared/process-util.c \
-             shared/hash.c shared/image-loader.c shared/cairo-util.c shared/frame.c \
+             shared/hash.c shared/image-loader.c shared/cairo-util.c \
+             shared/mobile-frame.c \
              shared/matrix.c libweston/vertex-clipping.c; do
       compile "$s"
     done
@@ -211,9 +218,18 @@ EOF
       compile "$p"
     done
     cp clients/window.c clients/mobile-window.c
+    cp ${./wwn-mobile-clients.h} ./wwn-mobile-clients.h
     cp ${./terminal-patches/patch-window-csd.py} ./patch-window-csd.py
     python3 patch-window-csd.py clients/mobile-window.c clients/window.h
+    cp ${./terminal-patches/patch-window-mobile-host.py} ./patch-window-mobile-host.py
+    python3 patch-window-mobile-host.py clients/mobile-window.c
     compile clients/mobile-window.c
+
+    # Standalone weston_log()/weston_log_set_handler() - see the file header
+    # for why this must NOT be satisfied by linking libweston-compositor-13.a.
+    compile ${./wwn-client-weston-log-shim.c}
+    compile ${./wwn-weston-log.c}
+    compile ${./mobile-weston-host-clients.c}
 
     for c in ${lib.concatStringsSep " " clients}; do
       sym=$(echo "$c" | tr '-' '_')

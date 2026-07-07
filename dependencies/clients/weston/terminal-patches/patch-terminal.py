@@ -8,12 +8,22 @@ from pathlib import Path
 
 
 def patch_ios_lf_newline(src: str) -> str:
-    """LF without CR must return to column 0 on Apple mobile fake PTY output.
+    """LF without CR must return to column 0 on Apple mobile / Android shells.
 
     Upstream weston-terminal only resets the cursor column on \\n when
-    MODE_LF_NEWLINE (DEC LNM) is set. Shell stdout on iOS uses \\n only
-    (zsh clears ONLCR in raw/ZLE mode), so each line kept the previous
-    column and looked progressively indented.
+    MODE_LF_NEWLINE (DEC LNM) is set. Shell stdout on iOS's fake PTY uses
+    \\n only (zsh clears ONLCR in raw/ZLE mode and never restores it for a
+    fake TTY), so each line kept the previous column and looked
+    progressively indented (staircased).
+
+    Android runs a *real* forkpty + real zsh (see terminal-patches for the
+    Android forkpty block), but exhibits the identical staircase artifact:
+    zsh's ZLE still clears ONLCR while line-editing and the Android pty's
+    baseline termios doesn't get ONLCR restored before external commands
+    run, so plain `\\n` from tools like `ls`/`coreutils` arrives without a
+    `\\r`. `ls` (few entries, one row) hides it; `ls -a` (more entries,
+    several rows) makes every row start one column further right than the
+    last. Cover Android with the same always-reset-column behavior.
     """
     marker = "patch_ios_lf_newline"
     if marker in src:
@@ -24,8 +34,9 @@ def patch_ios_lf_newline(src: str) -> str:
 \t\t}
 \t\t/* fallthrough */"""
     new = """\tcase '\\n':
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
-\t\t/* patch_ios_lf_newline: fake PTY shell output uses LF-only newlines */
+#if (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)) || defined(__ANDROID__)
+\t\t/* patch_ios_lf_newline: fake PTY (Apple mobile) / real zsh ZLE
+\t\t * (Android) shell output uses LF-only newlines */
 \t\tterminal->column = 0;
 #else
 \t\tif (terminal->mode & MODE_LF_NEWLINE) {
@@ -81,7 +92,7 @@ def patch_ios_terminal_font_face(src: str) -> str:
 \tterminal->font_normal = cairo_get_scaled_font (cr);
 \tcairo_scaled_font_reference(terminal->font_normal);"""
     new = """\tcairo_set_font_size(cr, option_font_size);
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(WWN_MOBILE_TERMINAL)
 \tterminal->font_bold = terminal_ios_load_font(cr, 1);
 \tterminal->font_normal = terminal_ios_load_font(cr, 0);
 \tif (!terminal->font_bold || !terminal->font_normal) {
@@ -119,7 +130,7 @@ def patch_ios_terminal_font_face(src: str) -> str:
 
 def patch_ios_font_default(src: str) -> str:
     old = '\tweston_config_section_get_string(s, "font", &option_font, "monospace");'
-    new = """#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+    new = """#if defined(WWN_MOBILE_TERMINAL)
 \tweston_config_section_get_string(s, "font", &option_font, "DejaVu Sans Mono");
 #else
 \tweston_config_section_get_string(s, "font", &option_font, "monospace");
@@ -132,7 +143,7 @@ def patch_ios_font_default(src: str) -> str:
 def patch_ios_fontconfig_init(src: str) -> str:
     anchor = '#include "window.h"'
     insert = """
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(WWN_MOBILE_TERMINAL)
 #include <fontconfig/fontconfig.h>
 #include <cairo-ft.h>
 #endif
@@ -153,7 +164,7 @@ def patch_ios_fontconfig_init(src: str) -> str:
 def patch_ios_font_helper_fn(src: str) -> str:
     anchor = "static struct terminal *\nterminal_create(struct display *display)\n{"
     helper = """
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(WWN_MOBILE_TERMINAL)
 static cairo_scaled_font_t *
 terminal_ios_load_font(cairo_t *cr, int bold)
 {
@@ -217,7 +228,7 @@ def patch_ios_font_metrics_log(src: str) -> str:
     old = "\tterminal->average_width = ceil(terminal->average_width);\n\n\tcairo_destroy(cr);"
     new = """\tterminal->average_width = ceil(terminal->average_width);
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(WWN_MOBILE_TERMINAL)
 \tWWN_TERM_LOG("weston-terminal: font cell %.1fx%.1f (avg_w=%.1f FONTCONFIG=%s)\\n",
 \t\t     terminal->average_width, terminal->extents.height,
 \t\t     terminal->average_width,
@@ -236,7 +247,7 @@ def patch_ios_font_metrics_log(src: str) -> str:
 
 def patch_ios_main_fcinit(src: str) -> str:
     old = "\td = display_create(&argc, argv);"
-    new = """#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+    new = """#if defined(WWN_MOBILE_TERMINAL)
 \tif (!FcInit())
 \t\tWWN_TERM_LOG("weston-terminal: FcInit failed (check FONTCONFIG_FILE)\\n");
 #endif
@@ -254,6 +265,48 @@ def patch_howmany_and_title(src: str) -> str:
     src = re.sub(r"\bhowmany\b", "WESTON_HOWMANY", src)
     src = src.replace("Wayland Terminal", "Weston Terminal")
     return src
+
+
+def patch_mobile_bootstrap(src: str) -> str:
+    """Define WWN_MOBILE_TERMINAL for Apple-mobile AND Android.
+
+    The font/glyph-rendering fixes below (fontconfig+cairo-ft font loader,
+    per-cell cairo_show_text, visible-color lifts) were originally gated on
+    Apple mobile only, so Android compiled essentially-upstream weston-terminal
+    and rendered notdef/tofu boxes. Android needs the same renderer, but NOT the
+    iOS socketpair fake-PTY machinery (it has a real forkpty + epoll). We split
+    the guards: render/font -> WWN_MOBILE_TERMINAL; PTY/input -> Apple-mobile.
+
+    Android also lacks the Apple wwn_app_log_fd()-based WWN_TERM_LOG (that lives
+    in the Apple-only spawn block), so provide an stderr-backed shim here — the
+    Android app already captures the client's stderr into logcat.
+    """
+    marker = "WWN_MOBILE_TERMINAL"
+    if marker in src:
+        return src
+    anchor = '#include "config.h"'
+    bootstrap = """
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+#if (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)) || defined(__ANDROID__)
+#ifndef WWN_MOBILE_TERMINAL
+#define WWN_MOBILE_TERMINAL 1
+#endif
+#endif
+#if defined(__ANDROID__)
+#include <stdio.h>
+#ifndef WWN_TERM_LOG
+#define WWN_TERM_LOG(fmt, ...)  fprintf(stderr, fmt, ##__VA_ARGS__)
+#endif
+#ifndef WWN_TERM_INFO
+#define WWN_TERM_INFO(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#endif
+#endif
+"""
+    if anchor not in src:
+        raise SystemExit("config.h include anchor missing for mobile bootstrap")
+    return src.replace(anchor, anchor + bootstrap, 1)
 
 
 def patch_ios_max_escape(src: str) -> str:
@@ -619,7 +672,7 @@ def patch_ios_redraw_show_text(src: str) -> str:
 
 \tattr.key = ~0;
 \tglyph_run_flush(&run, attr);"""
-    new = """#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+    new = """#if defined(WWN_MOBILE_TERMINAL)
 \t/* paint the foreground — cairo_show_text per cell; text_to_glyphs unreliable on iOS */
 \tfor (row = 0; row < terminal->height; row++) {
 \t\tp_row = terminal_get_row(terminal, row);
@@ -704,7 +757,7 @@ def patch_ios_redraw_visible_fg(src: str) -> str:
     """Lift palette black (fg 0) on dark bg; keep ANSI colors for fastfetch etc."""
     conditional = (
         "\t\t\tterminal_set_color(terminal, cr, attr.attr.fg);\n"
-        "#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)\n"
+        "#if defined(WWN_MOBILE_TERMINAL)\n"
         "\t\t\tif (attr.attr.fg == 0)\n"
         "\t\t\t\tcairo_set_source_rgb(cr, 0.92, 0.92, 0.92);\n"
         "#endif\n"
@@ -752,7 +805,7 @@ def patch_ios_redraw_background(src: str) -> str:
     )
     new = (
         "\tterminal_set_color(terminal, cr, terminal->color_scheme->border);\n"
-        "#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)\n"
+        "#if defined(WWN_MOBILE_TERMINAL)\n"
         "\tcairo_set_source_rgb(cr, 0.12, 0.12, 0.14);\n"
         "#endif\n"
         "\tcairo_paint(cr);"
@@ -769,7 +822,7 @@ def patch_ios_initial_redraw(src: str) -> str:
         return src
     old = "\treturn terminal;\n}\n\nstatic void\nterminal_destroy"
     new = (
-        "#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)\n"
+        "#if defined(WWN_MOBILE_TERMINAL)\n"
         "\twindow_schedule_redraw(terminal->window);\n"
         '\tWWN_TERM_LOG("weston-terminal: scheduled initial redraw\\n");\n'
         "#endif\n"
@@ -1442,6 +1495,7 @@ def main() -> None:
     path = Path(sys.argv[1])
     src = path.read_text()
     src = patch_howmany_and_title(src)
+    src = patch_mobile_bootstrap(src)
     src = patch_ios_lf_newline(src)
     src = patch_ios_spawn(src)
     src = patch_ios_pty_poll_field(src)

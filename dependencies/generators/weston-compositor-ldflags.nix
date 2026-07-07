@@ -24,8 +24,18 @@ let
       "-lwayland-egl"
     ];
   compositorArchive =
-    if !forceLoadCompositor || compositor == null then
+    if compositor == null then
       [ ]
+    else if !forceLoadCompositor then
+      # Lazy/normal archive linking: the linker only extracts objects that
+      # satisfy symbols still unresolved when it reaches this archive (e.g.
+      # weston_log/weston_log_set_handler from libweston/log.c, needed by
+      # mobile-weston-host-clients.c). Object files that duplicate symbols
+      # already pulled from a whole-archive/force_load'd client toytoolkit
+      # (xdg-shell-protocol.c, shared/matrix.c, etc. - compiled into both
+      # libweston-13.a and libweston-compositor-13.a) are simply never
+      # extracted, avoiding "duplicate symbol" link errors.
+      [ "${strip compositor}/lib/libweston-compositor-13.a" ]
     else if linkMode == "whole_archive" then
       [
         "-Wl,--whole-archive"

@@ -13,12 +13,21 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__ANDROID__)
+#define WWN_MOBILE_WAYLAND_HOST 1
+#elif defined(__APPLE__)
 #include <TargetConditionals.h>
+#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH
+#define WWN_MOBILE_WAYLAND_HOST 1
+#endif
+#endif
 
 #include "wwn-mobile-clients.h"
 
-#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH
+#if WWN_MOBILE_WAYLAND_HOST
+#if defined(__APPLE__)
 #include <pthread/qos.h>
+#endif
 #include <sched.h>
 #include <time.h>
 #include <wayland-client.h>
@@ -250,7 +259,7 @@ wwn_mobile_consume_wayland_socket_fd(void)
 		return -1;
 	return fd;
 }
-#endif /* Apple mobile */
+#endif /* WWN_MOBILE_WAYLAND_HOST */
 
 static char *
 wwn_strdup(const char *s)
@@ -467,8 +476,10 @@ wwn_client_run(struct wwn_client_launch_ctx *ctx, bool own_ctx)
 #endif
 
 	wwn_weston_client_log_init();
+#if defined(__APPLE__)
 	wwn_ios_refresh_bundle_env();
 	wwn_propagate_mobile_env();
+#endif
 
 	if (envp) {
 		for (char **e = envp; *e; e++) {
