@@ -245,6 +245,28 @@ def patch_ios_font_metrics_log(src: str) -> str:
     return src.replace(old, new, 1)
 
 
+def patch_android_font_size(src: str) -> str:
+    """Scale terminal font from WAWONA_TERMINAL_FONT_SIZE (set by android_jni.c)."""
+    marker = "WAWONA_TERMINAL_FONT_SIZE"
+    if marker in src:
+        return src
+    old = '\tweston_config_section_get_int(s, "font-size", &option_font_size, 14);'
+    new = """\tweston_config_section_get_int(s, "font-size", &option_font_size, 14);
+#if defined(WWN_MOBILE_TERMINAL)
+\t{
+\t\tconst char *env_size = getenv("WAWONA_TERMINAL_FONT_SIZE");
+\t\tif (env_size && env_size[0]) {
+\t\t\tint parsed = atoi(env_size);
+\t\t\tif (parsed >= 8 && parsed <= 48)
+\t\t\t\toption_font_size = parsed;
+\t\t}
+\t}
+#endif"""
+    if old not in src:
+        raise SystemExit("terminal font-size config anchor missing")
+    return src.replace(old, new, 1)
+
+
 def patch_ios_main_fcinit(src: str) -> str:
     old = "\td = display_create(&argc, argv);"
     new = """#if defined(WWN_MOBILE_TERMINAL)
@@ -1517,6 +1539,7 @@ def main() -> None:
     src = patch_ios_font_helper_fn(src)
     src = patch_ios_main_fcinit(src)
     src = patch_ios_font_default(src)
+    src = patch_android_font_size(src)
     src = patch_ios_terminal_font_face(src)
     src = patch_ios_font_metrics_log(src)
     src = patch_ios_redraw_show_text(src)

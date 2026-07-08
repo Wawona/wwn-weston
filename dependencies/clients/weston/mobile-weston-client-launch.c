@@ -13,14 +13,18 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
 #include <TargetConditionals.h>
+#endif
 
 #include "weston.h"
 #include "shared/process-util.h"
 #include "include/wwn-mobile-clients.h"
 
-#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH
+#if defined(__ANDROID__) || (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH))
+#if defined(__APPLE__)
 #include <pthread/qos.h>
+#endif
 #include <sys/socket.h>
 #include <wayland-server.h>
 
@@ -335,7 +339,7 @@ wwn_launch_panel_client(char *const *argp, char *const *envp)
 	pthread_detach(thread);
 }
 
-#else /* !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH) */
+#else /* !(Android or Apple mobile) */
 
 struct wet_process *
 wwn_wet_client_launch_inprocess(struct weston_compositor *compositor,

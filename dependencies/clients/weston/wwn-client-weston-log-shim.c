@@ -6,10 +6,10 @@
  * staged into a full libweston build (macos.nix), but there is no such build
  * on the client-only mobile toytoolkit path.
  *
- * Do NOT "fix" this by linking libweston-compositor-13.a instead: doing so
- * also resolves android_jni.c's `weston_compositor_main` weak symbol (the
- * separate, opt-in "Nested Compositors Support" feature) and boots an
- * unrelated, not-Android-ready nested-compositor path that hangs the app.
+ * Keep this shim in the toytoolkit archive, but export weak symbols. Toytoolkit
+ * clients need logging when linked without the compositor; when Wawona also
+ * links the real nested-compositor archive, libweston/log.c provides the strong
+ * symbols and wins.
  */
 
 #include <stdarg.h>
@@ -20,14 +20,14 @@ typedef int (*wwn_weston_log_func_t)(const char *fmt, va_list ap);
 static wwn_weston_log_func_t g_wwn_log_handler;
 static wwn_weston_log_func_t g_wwn_log_continue_handler;
 
-void
+__attribute__((weak)) void
 weston_log_set_handler(wwn_weston_log_func_t log, wwn_weston_log_func_t cont)
 {
 	g_wwn_log_handler = log;
 	g_wwn_log_continue_handler = cont;
 }
 
-int
+__attribute__((weak)) int
 weston_log(const char *fmt, ...)
 {
 	va_list ap;
@@ -40,7 +40,7 @@ weston_log(const char *fmt, ...)
 	return ret;
 }
 
-int
+__attribute__((weak)) int
 weston_log_continue(const char *fmt, ...)
 {
 	va_list ap;

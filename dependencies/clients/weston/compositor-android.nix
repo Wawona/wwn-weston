@@ -354,6 +354,7 @@ static inline void *wwn_static_module_lookup(const char *name, const char *entry
 }
 #endif
 EOF
+    cp ${./wwn-mobile-clients.h} include/wwn-mobile-clients.h
 
     python3 - <<'PY'
 from pathlib import Path
@@ -380,7 +381,13 @@ main = Path("compositor/main.c").read_text()
 main = main.replace(
     "\twl_display_run(display);",
     """\twhile (!wwn_weston_compositor_shutdown_requested) {
-\t\tif (wl_event_loop_dispatch(loop, 0) < 0)
+\t\tint timeout_ms = 100;
+\t\tif (wwn_mobile_pending_roundtrips() > 0 ||
+\t\t    wwn_mobile_active_clients() > 0) {
+\t\t\twl_display_flush_clients(display);
+\t\t\ttimeout_ms = 1;
+\t\t}
+\t\tif (wl_event_loop_dispatch(loop, timeout_ms) < 0)
 \t\t\tbreak;
 \t}""",
     1,
@@ -388,9 +395,132 @@ main = main.replace(
 if "wwn-static-modules.h" not in main:
     main = main.replace(
         '#include "weston-private.h"',
-        '#include "weston-private.h"\n#include "include/wwn-static-modules.h"',
+        '#include "weston-private.h"\n#include "include/wwn-static-modules.h"\n#include "include/wwn-mobile-clients.h"',
         1,
     )
+forward_decl = """
+struct wet_process *
+wwn_wet_client_launch_inprocess(struct weston_compositor *compositor,
+\t\t\t\tchar *const *argp,
+\t\t\t\tchar *const *envp,
+\t\t\t\tint *no_cloexec_fds,
+\t\t\t\tsize_t num_no_cloexec_fds,
+\t\t\t\twet_process_cleanup_func_t cleanup,
+\t\t\t\tvoid *cleanup_data);
+"""
+wet_launch_anchor = "struct wet_process *\nwet_client_launch(struct weston_compositor *compositor,"
+if "wwn_wet_client_launch_inprocess" not in main:
+    if wet_launch_anchor not in main:
+        raise SystemExit("wet_client_launch definition anchor missing")
+    main = main.replace(
+        wet_launch_anchor,
+        forward_decl + "\n" + wet_launch_anchor,
+        1,
+    )
+inprocess_hook = """
+\t{
+\t\tproc = wwn_wet_client_launch_inprocess(compositor, argp, envp,
+\t\t\t\t\tno_cloexec_fds, num_no_cloexec_fds,
+\t\t\t\t\tcleanup, cleanup_data);
+\t\tif (proc) {
+\t\t\twl_list_insert(&wet->child_process_list, &proc->link);
+\t\t\tcustom_env_fini(child_env);
+\t\t\tfree(fail_exec);
+\t\t\treturn proc;
+\t\t}
+\t}
+"""
+fork_anchor = "\tstr_printf(&fail_exec, \"Error: Couldn't launch client '%s'\\n\", argp[0]);\n\n\tpid = fork();"
+if fork_anchor not in main:
+    raise SystemExit("wet_client_launch fork anchor missing")
+if inprocess_hook.strip() not in main:
+    main = main.replace(
+        fork_anchor,
+        "\tstr_printf(&fail_exec, \"Error: Couldn't launch client '%s'\\n\", argp[0]);\n"
+        + inprocess_hook
+        + "\n\tpid = fork();",
+        1,
+    )
+wet_start_old = """\tproc = wet_client_launch(compositor, &child_env,
+\t\t\t\t no_cloexec_fds, num_no_cloexec_fds,
+\t\t\t\t NULL, NULL);
+\tif (!proc)
+\t\treturn NULL;
+
+\tclient = wl_client_create(compositor->wl_display,
+\t\t\t\t  wayland_socket.fds[0]);
+\tif (!client) {
+\t\tweston_log("wet_client_start: "
+\t\t\t   "wl_client_create failed while launching '%s'.\\n",
+\t\t\t   path);
+\t\t/* We have no way of killing the process, so leave it hanging */
+\t\tgoto out_sock;
+\t}
+
+\t/* Close the child end of our socket which we no longer need */
+\tclose(wayland_socket.fds[1]);
+
+\t/* proc is now owned by the compositor's process list */
+
+\treturn client;
+
+out_sock:
+\tfdstr_close_all(&wayland_socket);
+
+\treturn NULL;"""
+wet_start_new = """\t/*
+\t * Create the wl_client before starting the in-process client thread.
+\t * Otherwise the client may connect and bind globals before the server
+\t * associates the socket with a wl_client (fork naturally delays this).
+\t */
+\tclient = wl_client_create(compositor->wl_display,
+\t\t\t\t  wayland_socket.fds[0]);
+\tif (!client) {
+\t\tweston_log("wet_client_start: "
+\t\t\t   "wl_client_create failed while launching '%s'.\\n",
+\t\t\t   path);
+\t\tgoto out_sock;
+\t}
+
+\tproc = wet_client_launch(compositor, &child_env,
+\t\t\t\t no_cloexec_fds, num_no_cloexec_fds,
+\t\t\t\t NULL, NULL);
+\tif (!proc) {
+\t\tweston_log("wet_client_start: "
+\t\t\t   "failed to launch '%s'.\\n", path);
+\t\tgoto out_client;
+\t}
+
+\t/* Close the child end of our socket which we no longer need */
+\tclose(wayland_socket.fds[1]);
+
+\t/* proc is now owned by the compositor's process list */
+
+\treturn client;
+
+out_client:
+\twl_client_destroy(client);
+
+out_sock:
+\tfdstr_close_all(&wayland_socket);
+
+\treturn NULL;"""
+if wet_start_old not in main:
+    raise SystemExit("wet_client_start reorder anchor missing")
+if "Create the wl_client before starting the in-process client thread" not in main:
+    main = main.replace(wet_start_old, wet_start_new, 1)
+compositor_ok = "\tif (wet.compositor == NULL) {\n\t\tweston_log(\"fatal: failed to create compositor\\n\");\n\t\tgoto out;\n\t}"
+compositor_ok_reg = compositor_ok + "\n\n\twwn_mobile_register_compositor_display(display);"
+if "wwn_mobile_register_compositor_display(display)" not in main:
+    if compositor_ok not in main:
+        raise SystemExit("weston_compositor_create success anchor missing")
+    main = main.replace(compositor_ok, compositor_ok_reg, 1)
+destroy_anchor = "\tweston_compositor_destroy(wet.compositor);"
+destroy_reg = "\twwn_mobile_register_compositor_display(NULL);\n" + destroy_anchor
+if "wwn_mobile_register_compositor_display(NULL)" not in main:
+    if destroy_anchor not in main:
+        raise SystemExit("weston_compositor_destroy anchor missing")
+    main = main.replace(destroy_anchor, destroy_reg, 1)
 Path("compositor/main.c").write_text(main)
 PY
 
@@ -407,6 +537,7 @@ int weston_compositor_main(int argc, char **argv)
 	return wet_main(argc, argv, NULL);
 }
 EOF
+    cp ${./mobile-weston-client-launch.c} compositor/mobile-weston-client-launch.c
     python3 - <<'PY'
 from pathlib import Path
 path = Path("compositor/meson.build")
@@ -417,6 +548,12 @@ if needle not in text:
     raise SystemExit("main.c entry not found in compositor/meson.build")
 if "wwn-weston-compositor-main.c" not in text:
     text = text.replace(needle, insert, 1)
+needle2 = "\t'wwn-weston-compositor-main.c',"
+insert2 = needle2 + "\n\t'mobile-weston-client-launch.c',"
+if needle2 not in text:
+    raise SystemExit("wwn-weston-compositor-main.c entry not found")
+if "mobile-weston-client-launch.c" not in text:
+    text = text.replace(needle2, insert2, 1)
 path.write_text(text)
 PY
 

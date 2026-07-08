@@ -35,7 +35,7 @@ let
       # (xdg-shell-protocol.c, shared/matrix.c, etc. - compiled into both
       # libweston-13.a and libweston-compositor-13.a) are simply never
       # extracted, avoiding "duplicate symbol" link errors.
-      [ "${strip compositor}/lib/libweston-compositor-13.a" ]
+      [ "-Wl,-u,weston_compositor_main" "${strip compositor}/lib/libweston-compositor-13.a" ]
     else if linkMode == "whole_archive" then
       [
         "-Wl,--whole-archive"

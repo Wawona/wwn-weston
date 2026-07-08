@@ -24,20 +24,15 @@ window_get_geometry(struct window *window, struct rectangle *geometry)
 window_get_geometry(struct window *window, struct rectangle *geometry)
 {
 	/*
-	 * frame_input_rect() only excludes the drop shadow (shadow_margin),
-	 * leaving the painted border + titlebar inside the reported xdg
-	 * window geometry. window_sync_geometry() below runs on every
-	 * redraw/commit and calls xdg_surface_set_window_geometry() with
-	 * whatever this returns, so using frame_input_rect() here makes the
-	 * compositor composite the client's border/titlebar chrome as if it
-	 * were real content: the CSD border stays visible and cropping is
-	 * off by the border width + titlebar height on every side.
-	 * frame_interior() is the actual innermost content rect (border,
-	 * titlebar, and shadow all excluded); use that so the compositor
-	 * crops exactly the same region the client draws its content into.
+	 * Mobile Wawona wants weston-family CSD frames to behave like iOS:
+	 * crop away the drop shadow, but keep the painted frame/border as
+	 * the visible edge of the Wayland client. frame_input_rect() is the
+	 * right surface-local rect for that contract; frame_interior() would
+	 * also remove the border/titlebar and make weston-terminal look like
+	 * a frameless content texture even when Force SSD is off.
 	 */
 	if (window->frame && !window->fullscreen)
-		frame_interior(window->frame->frame,
+		frame_input_rect(window->frame->frame,
 				 &geometry->x,
 				 &geometry->y,
 				 &geometry->width,
@@ -75,18 +70,13 @@ window_set_content_geometry(struct window *window, int32_t x, int32_t y,
 		return;
 
 	/*
-	 * x/y/width/height here are relative to the *child* widget's own
-	 * content area (e.g. weston-terminal's cell-grid inset), not the
-	 * decorated window buffer as a whole. xdg_surface_set_window_geometry()
-	 * is defined in surface-local coordinates, i.e. relative to the top
-	 * left of the CSD buffer that also contains the border/titlebar/drop
-	 * shadow drawn by frame_repaint(). Without adding the frame's own
-	 * interior offset here, the compositor crops only the caller's small
-	 * child-relative inset and leaves the border/titlebar/shadow visible
-	 * as part of the "content" it composites.
+	 * x/y/width/height here are relative to the child widget's own area
+	 * (for weston-terminal, the cell grid). xdg_surface_set_window_geometry()
+	 * is surface-local, so shift by the frame's input rect: this strips the
+	 * shadow while preserving the CSD frame/border as the visible edge.
 	 */
 	if (window->frame)
-		frame_interior(window->frame->frame, &frame_x, &frame_y,
+		frame_input_rect(window->frame->frame, &frame_x, &frame_y,
 				NULL, NULL);
 
 	geometry.x = frame_x + x;

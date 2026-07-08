@@ -14,6 +14,7 @@
   buildPackages,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  enableGlClients ? false,
   ...
 }:
 
@@ -35,6 +36,13 @@ let
   libffi = buildModule.buildForAndroid "libffi" { };
   pcre2 = buildModule.buildForAndroid "pcre2" { };
   libintl = buildModule.buildForAndroid "libintl" { };
+
+  glClients = if enableGlClients then buildModule.buildForAndroid "kmscube" { } else null;
+  iland = if enableGlClients then buildModule.buildForAndroid "iland" { } else null;
+  angle = if enableGlClients then buildModule.buildForAndroid "angle" { } else null;
+  glIncludeFlags = if enableGlClients then
+    "-I${iland}/include -I${iland}/include/EGL -I${iland}/include/GLES2 -I${angle}/include"
+  else "";
 
   pkgConfigPath = lib.concatStringsSep ":" (map (d: "${d}/lib/pkgconfig") [
     cairo pango fontconfig freetype glib harfbuzz fribidi pixman libpng
@@ -225,8 +233,9 @@ EOF
     python3 patch-window-mobile-host.py clients/mobile-window.c
     compile clients/mobile-window.c
 
-    # Standalone weston_log()/weston_log_set_handler() - see the file header
-    # for why this must NOT be satisfied by linking libweston-compositor-13.a.
+    # Standalone weston_log()/weston_log_set_handler() for the client-only
+    # toytoolkit archive. The real nested compositor is linked separately by
+    # Wawona via weston-compositor-ldflags.nix.
     compile ${./wwn-client-weston-log-shim.c}
     compile ${./wwn-weston-log.c}
     compile ${./mobile-weston-host-clients.c}
@@ -235,6 +244,14 @@ EOF
       sym=$(echo "$c" | tr '-' '_')
       compile "clients/$c.c" -Dmain="''${sym}_main"
     done
+
+    if [ "${if enableGlClients then "1" else "0"}" = "1" ] && [ -n "${if enableGlClients then "${glClients}" else ""}" ]; then
+      sym=simple_egl
+      echo "CC clients/simple-egl.c (iland GL stack)"
+      compile "clients/simple-egl.c" -Dmain="''${sym}_main" ${glIncludeFlags} || {
+        echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
+      }
+    fi
 
     cat > weston_main.c <<'EOF'
 extern int flower_main(int argc, char **argv);

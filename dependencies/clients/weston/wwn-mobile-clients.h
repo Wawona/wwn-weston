@@ -48,6 +48,8 @@ void *wwn_client_thread_entry(void *data);
 #if defined(__APPLE__)
 void wwn_ios_refresh_bundle_env(void);
 void wwn_propagate_mobile_env(void);
+#endif
+#if defined(__ANDROID__) || defined(__APPLE__)
 void wwn_mobile_register_compositor_display(struct wl_display *display);
 void wwn_launch_panel_client(char *const *argp, char *const *envp);
 void wwn_launch_host_client(char *const *argp, char *const *envp);
