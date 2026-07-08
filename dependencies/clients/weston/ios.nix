@@ -202,6 +202,9 @@ PY
     gen_proto text-cursor-position           "protocol/text-cursor-position.xml"
     gen_proto ivi-application                "protocol/ivi-application.xml"
     gen_proto weston-desktop-shell           "protocol/weston-desktop-shell.xml"
+    # simple-egl (GL clients path) includes these two staging protocols.
+    gen_proto fractional-scale-v1            "$WP/staging/fractional-scale/fractional-scale-v1.xml"
+    gen_proto tearing-control-v1             "$WP/staging/tearing-control/tearing-control-v1.xml"
 
     # --- config.h tailored for the Apple toytoolkit build ---
     cat > config.h <<'EOF'
@@ -293,8 +296,11 @@ EOF
     mkdir -p wlsrc && tar xf ${waylandSrc} -C wlsrc
     WLCURSOR=$(echo wlsrc/wayland-*/cursor)
 
+    # NOTE: no -Ishared here. shared/signal.h would shadow the SDK's <signal.h>
+    # (breaking sigaction/sigemptyset in e.g. simple-egl.c); quote-includes in
+    # shared/*.c already resolve against their own directory.
     CFLAGS="-arch arm64 -isysroot $SDKROOT ${minVerFlag} -fPIC -D_GNU_SOURCE -D_DARWIN_C_SOURCE -O2 \
-      -I. -Iinclude -Igen -Ishared \
+      -I. -Iinclude -Igen \
       -I$WLCURSOR \
       -I${libwayland}/include \
       -I${libwayland}/include/wayland \
@@ -540,11 +546,17 @@ PY
       compile "clients/$c.c" -Dmain="''${sym}_main"
     done
     if [ "$GL_CLIENTS_OK" = "1" ]; then
-      sym=simple_egl
       echo "CC clients/simple-egl.c (iland GL stack)"
-      compile "clients/simple-egl.c" -Dmain="''${sym}_main" ${glIncludeFlags} || {
+      # ENABLE_EGL unlocks weston_check_egl_extension in shared/platform.h.
+      # Compile directly (not via the compile() helper) so a failure doesn't
+      # append a nonexistent object to $objs and break ar below.
+      egl_obj="clients_simple-egl_c.o"
+      if "$CLANG" -c clients/simple-egl.c $CFLAGS -Dmain=simple_egl_main \
+        -DENABLE_EGL=1 ${glIncludeFlags} -o "$egl_obj"; then
+        objs="$objs $egl_obj"
+      else
         echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
-      }
+      fi
     fi
 
     echo "CC weston-simple-shm (patched in-process weston_simple_shm_main)"
