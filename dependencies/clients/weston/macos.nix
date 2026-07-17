@@ -117,12 +117,18 @@ static inline int pipe2(int fds[2], int flags) {
 
 /* Weston provides the definition in os-compatibility.c, we just need the declaration */
 char *strchrnul(const char *s, int c);
+
+/* String literal (not getprogname): App Store rejects libSystem ___progname.
+ * Define in the header so meson/ninja cannot strip -D quotes. */
+#ifndef program_invocation_short_name
+#define program_invocation_short_name "weston"
+#endif
 #endif
 #endif
 EOF
 
     mesonFlagsArray+=(
-      "-Dc_args=-I${epoll-shim}/include/libepoll-shim -I$PWD/include -include $PWD/include/weston-macos-polyfills.h -Dprogram_invocation_short_name=\"weston\" -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME"
+      "-Dc_args=-I${epoll-shim}/include/libepoll-shim -I$PWD/include -include $PWD/include/weston-macos-polyfills.h -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME"
       "-Dc_link_args=-L${epoll-shim}/lib -lepoll-shim"
       "-Dcpp_link_args=-L${epoll-shim}/lib -lepoll-shim"
     )

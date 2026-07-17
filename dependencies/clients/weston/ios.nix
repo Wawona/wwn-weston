@@ -265,6 +265,10 @@ static inline int pipe2(int fds[2], int flags) {
     }
     return 0;
 }
+/* String literal (not getprogname): App Store rejects libSystem ___progname. */
+#ifndef program_invocation_short_name
+#define program_invocation_short_name "weston"
+#endif
 #endif
 #endif
 EOF
@@ -305,7 +309,6 @@ EOF
       -I${libwayland}/include \
       -I${libwayland}/include/wayland \
       -I${epollShim}/include/libepoll-shim \
-      -Dprogram_invocation_short_name=\"weston\" \
       -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME \
       -include $PWD/include/apple-polyfills.h \
       $DEP_CFLAGS"

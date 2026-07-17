@@ -727,6 +727,10 @@ static inline pid_t wwn_weston_fork(void) { return (pid_t)-1; }
 #define execv(file, argv) (-1)
 #define execvp(file, argv) (-1)
 #endif
+/* String literal (not getprogname): App Store rejects libSystem ___progname. */
+#ifndef program_invocation_short_name
+#define program_invocation_short_name "weston"
+#endif
 #endif
 #endif
 EOF
@@ -1109,7 +1113,7 @@ endian = 'little'
 subsystem = '${mobile.mesonSubsystem}'
 
 [built-in options]
-c_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC', '-D_DARWIN_C_SOURCE', '-I${epollShim}/include/libepoll-shim', '-I$PWD/include', '-I$PWD/include/wayland'${lib.optionalString enableIlandDrm ", '-I$PWD/include/libseat', '-I${iland}/include/EGL', '-I${iland}/include/GLES2', '-I${angle}/include', '-DILAND_ANGLE_STATIC'"}, '-include', '$PWD/include/weston-macos-polyfills.h', '-Dprogram_invocation_short_name="weston"', '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC', '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME']
+c_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC', '-D_DARWIN_C_SOURCE', '-I${epollShim}/include/libepoll-shim', '-I$PWD/include', '-I$PWD/include/wayland'${lib.optionalString enableIlandDrm ", '-I$PWD/include/libseat', '-I${iland}/include/EGL', '-I${iland}/include/GLES2', '-I${angle}/include', '-DILAND_ANGLE_STATIC'"}, '-include', '$PWD/include/weston-macos-polyfills.h', '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC', '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME']
 cpp_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC', '-D_DARWIN_C_SOURCE', '-I$PWD/include']
 c_link_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-L${epollShim}/lib', '-lepoll-shim', '-L${libffi}/lib', '-lffi']
 cpp_link_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-L${epollShim}/lib', '-lepoll-shim', '-L${libffi}/lib', '-lffi']
@@ -1134,7 +1138,7 @@ endian = 'little'
 subsystem = '${mobile.mesonSubsystem}'
 
 [built-in options]
-c_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC', '-D_DARWIN_C_SOURCE', '-I${epollShim}/include/libepoll-shim', '-I$PWD/include', '-I$PWD/include/wayland'${lib.optionalString enableIlandDrm ", '-I$PWD/include/libseat', '-I${iland}/include/EGL', '-I${iland}/include/GLES2', '-I${angle}/include', '-DILAND_ANGLE_STATIC'"}, '-include', '$PWD/include/weston-macos-polyfills.h', '-Dprogram_invocation_short_name="weston"', '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC', '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME']
+c_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC', '-D_DARWIN_C_SOURCE', '-I${epollShim}/include/libepoll-shim', '-I$PWD/include', '-I$PWD/include/wayland'${lib.optionalString enableIlandDrm ", '-I$PWD/include/libseat', '-I${iland}/include/EGL', '-I${iland}/include/GLES2', '-I${angle}/include', '-DILAND_ANGLE_STATIC'"}, '-include', '$PWD/include/weston-macos-polyfills.h', '-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC', '-DCLOCK_REALTIME_COARSE=CLOCK_REALTIME']
 cpp_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC', '-D_DARWIN_C_SOURCE', '-I$PWD/include']
 c_link_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-L${epollShim}/lib', '-lepoll-shim', '-L${libffi}/lib', '-lffi']
 cpp_link_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-L${epollShim}/lib', '-lepoll-shim', '-L${libffi}/lib', '-lffi']
