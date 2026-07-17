@@ -122,7 +122,7 @@ char *strchrnul(const char *s, int c);
 EOF
 
     mesonFlagsArray+=(
-      "-Dc_args=-I${epoll-shim}/include/libepoll-shim -I$PWD/include -include $PWD/include/weston-macos-polyfills.h -Dprogram_invocation_short_name=getprogname() -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME"
+      "-Dc_args=-I${epoll-shim}/include/libepoll-shim -I$PWD/include -include $PWD/include/weston-macos-polyfills.h -Dprogram_invocation_short_name=\"weston\" -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME"
       "-Dc_link_args=-L${epoll-shim}/lib -lepoll-shim"
       "-Dcpp_link_args=-L${epoll-shim}/lib -lepoll-shim"
     )

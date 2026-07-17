@@ -305,7 +305,7 @@ EOF
       -I${libwayland}/include \
       -I${libwayland}/include/wayland \
       -I${epollShim}/include/libepoll-shim \
-      -Dprogram_invocation_short_name=getprogname() \
+      -Dprogram_invocation_short_name=\"weston\" \
       -DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -DCLOCK_REALTIME_COARSE=CLOCK_REALTIME \
       -include $PWD/include/apple-polyfills.h \
       $DEP_CFLAGS"
