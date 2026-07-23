@@ -549,16 +549,16 @@ PY
       compile "clients/$c.c" -Dmain="''${sym}_main"
     done
     if [ "$GL_CLIENTS_OK" = "1" ]; then
-      echo "CC clients/simple-egl.c (iland GL stack)"
-      # ENABLE_EGL unlocks weston_check_egl_extension in shared/platform.h.
-      # Compile directly (not via the compile() helper) so a failure doesn't
-      # append a nonexistent object to $objs and break ar below.
-      egl_obj="clients_simple-egl_c.o"
-      if "$CLANG" -c clients/simple-egl.c $CFLAGS -Dmain=simple_egl_main \
-        -DENABLE_EGL=1 ${glIncludeFlags} -o "$egl_obj"; then
+      # Do NOT compile upstream clients/simple-egl.c on Apple mobile: it is a
+      # Wayland-EGL client (wl_egl_window + EGL_PLATFORM_WAYLAND_KHR) and aborts
+      # the Wawona host under iland GBM/ANGLE. Ship a stub; use kmscube for GL.
+      echo "CC simple-egl-apple-mobile-stub.c (Wayland-EGL unsupported)"
+      egl_obj="clients_simple-egl_stub_c.o"
+      stub_src="${./simple-egl-apple-mobile-stub.c}"
+      if "$CLANG" -c "$stub_src" $CFLAGS -o "$egl_obj"; then
         objs="$objs $egl_obj"
       else
-        echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
+        echo "WARNING: weston-simple-egl stub failed to compile" >&2
       fi
     fi
 

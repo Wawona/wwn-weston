@@ -233,12 +233,53 @@ def patch_ios_font_metrics_log(src: str) -> str:
 \t\t     terminal->average_width, terminal->extents.height,
 \t\t     terminal->average_width,
 \t\t     getenv("FONTCONFIG_FILE") ? getenv("FONTCONFIG_FILE") : "(unset)");
-\tif (terminal->average_width < 1.0 || terminal->extents.height < 1.0)
-\t\tWWN_TERM_LOG("weston-terminal: WARNING: zero font metrics — text will not render\\n");
+\tif (terminal->average_width < 1.0 || terminal->extents.height < 1.0) {
+\t\tdouble fs = (double)(option_font_size > 0 ? option_font_size : 14);
+
+\t\t/* Fontconfig/cairo-ft can fail on Apple mobile; keep a usable grid so
+\t\t * configure(0,0) → preferred size still produces a non-zero SHM buffer. */
+\t\tWWN_TERM_LOG("weston-terminal: WARNING: zero font metrics — "
+\t\t\t     "using %.1f fallback (text may be blank)\\n", fs);
+\t\tif (terminal->average_width < 1.0)
+\t\t\tterminal->average_width = ceil(fs * 0.6);
+\t\tif (terminal->extents.height < 1.0) {
+\t\t\tterminal->extents.ascent = fs;
+\t\t\tterminal->extents.descent = ceil(fs * 0.25);
+\t\t\tterminal->extents.height = terminal->extents.ascent +
+\t\t\t\t\t\t  terminal->extents.descent;
+\t\t}
+\t}
 #endif
 
 \tcairo_destroy(cr);"""
-    if "font cell" in src:
+    if "using %.1f fallback" in src or "using %\\.1f fallback" in src:
+        return src
+    if "font cell" in src and "using %.1f fallback" not in src:
+        # Upgrade older warn-only patch.
+        warn_only = (
+            "\tif (terminal->average_width < 1.0 || terminal->extents.height < 1.0)\n"
+            '\t\tWWN_TERM_LOG("weston-terminal: WARNING: zero font metrics — '
+            'text will not render\\n");'
+        )
+        if warn_only in src:
+            return src.replace(
+                warn_only,
+                "\tif (terminal->average_width < 1.0 || terminal->extents.height < 1.0) {\n"
+                "\t\tdouble fs = (double)(option_font_size > 0 ? option_font_size : 14);\n"
+                "\n"
+                '\t\tWWN_TERM_LOG("weston-terminal: WARNING: zero font metrics — "\n'
+                '\t\t\t     "using %.1f fallback (text may be blank)\\n", fs);\n'
+                "\t\tif (terminal->average_width < 1.0)\n"
+                "\t\t\tterminal->average_width = ceil(fs * 0.6);\n"
+                "\t\tif (terminal->extents.height < 1.0) {\n"
+                "\t\t\tterminal->extents.ascent = fs;\n"
+                "\t\t\tterminal->extents.descent = ceil(fs * 0.25);\n"
+                "\t\t\tterminal->extents.height = terminal->extents.ascent +\n"
+                "\t\t\t\t\t\t  terminal->extents.descent;\n"
+                "\t\t}\n"
+                "\t}",
+                1,
+            )
         return src
     if old not in src:
         raise SystemExit("terminal font metrics log anchor missing")
@@ -939,17 +980,26 @@ state_changed_handler"""
 
 
 def patch_ios_skip_terminal_create_resize(src: str) -> str:
-    old = """\tterminal_resize(terminal, 20, 5); /* Set minimum size first */
-\tterminal_resize(terminal, 80, 25);"""
-    new = """#if !defined(__APPLE__) || (!TARGET_OS_IPHONE && !TARGET_OS_TV && !TARGET_OS_WATCH)
+    """Keep terminal_resize(80,25) on Apple mobile.
+
+    Toytoolkit's xdg_toplevel.configure(0,0) only calls window_schedule_resize
+    when saved_allocation is non-zero (window.c). Skipping terminal_resize left
+    allocation at 0×0, so resize_handler never ran, SHM never committed, and
+    iOS stayed black while the PTY still worked.
+    """
+    # Undo older "skip resize on iOS" patch if present.
+    skipped = """#if !defined(__APPLE__) || (!TARGET_OS_IPHONE && !TARGET_OS_TV && !TARGET_OS_WATCH)
 \tterminal_resize(terminal, 20, 5); /* Set minimum size first */
 \tterminal_resize(terminal, 80, 25);
 #endif"""
-    if "#if !defined(__APPLE__) || (!TARGET_OS_IPHONE && !TARGET_OS_TV && !TARGET_OS_WATCH)\n\tterminal_resize(terminal, 20, 5);" in src:
+    restored = """\tterminal_resize(terminal, 20, 5); /* Set minimum size first */
+\tterminal_resize(terminal, 80, 25);"""
+    if skipped in src:
+        return src.replace(skipped, restored, 1)
+    # Fresh upstream already has the resize calls — nothing to do.
+    if restored in src:
         return src
-    if old not in src:
-        raise SystemExit("terminal_create initial resize anchor missing")
-    return src.replace(old, new, 1)
+    raise SystemExit("terminal_create initial resize anchor missing")
 
 
 def patch_ios_winsize(src: str) -> str:
@@ -1024,60 +1074,15 @@ def patch_ios_skip_terminal_run_resize(src: str) -> str:
 def patch_ios_resize_pace_order(src: str) -> str:
     """Size grid before unblocking the shell (matches fork+pace intent).
 
-    On iOS we defer shell unblock until the first non-zero configure so the
-    cell grid (and winsize) exist before zsh writes its prompt; otherwise early
-    output races io_handler against a NULL terminal->data.
+    On iOS, xdg configure(0,0) means client-preferred size. We must set a
+    non-zero widget size (80×24 cells) so the first redraw commits SHM; the
+    PTY grid alone is not enough to paint.
     """
-    if "terminal->ios_configure_count++" in src:
-        old_else = """\t} else {
-\t\tif (columns >= 1 && rows >= 1)
-\t\t\tterminal_resize_cells(terminal, columns, rows);
-\t\twwn_pty_ios_signal_shells();
-\t\twindow_schedule_redraw(terminal->window);
-\t\tterminal_ios_arm_pty_poll(terminal);
-\t}"""
-        new_else = """\t} else {
-\t\tif (columns >= 1 && rows >= 1)
-\t\t\tterminal_resize_cells(terminal, columns, rows);
-\t\tterminal_ios_flush_pending_pty(terminal);
-\t\tterminal_master_consume(terminal);
-\t\twwn_pty_ios_signal_shells();
-\t\twindow_schedule_redraw(terminal->window);
-\t\tterminal_ios_arm_pty_poll(terminal);
-\t}"""
-        if old_else in src:
-            return src.replace(old_else, new_else, 1)
+    if "configure 0x0 — preferred 80x24 surface" in src:
         return src
-
-    old = """\tif (terminal->pace_pipe >= 0) {
-\t\tclose(terminal->pace_pipe);
-\t\tterminal->pace_pipe = -1;
-\t}
-\tm = 2 * terminal->margin;
-\tcolumns = (width - m) / (int32_t) terminal->average_width;
-\trows = (height - m) / (int32_t) terminal->extents.height;
-
-\tif (!window_is_fullscreen(terminal->window) &&
-\t    !window_is_maximized(terminal->window)) {
-\t\twidth = columns * terminal->average_width + m;
-\t\theight = rows * terminal->extents.height + m;
-\t\twidget_set_size(terminal->widget, width, height);
-\t}
-
-\tterminal_resize_cells(terminal, columns, rows);"""
-    new = """\tm = 2 * terminal->margin;
-\tcolumns = (width - m) / (int32_t) terminal->average_width;
-\trows = (height - m) / (int32_t) terminal->extents.height;
-
-\tif (!window_is_fullscreen(terminal->window) &&
-\t    !window_is_maximized(terminal->window)) {
-\t\twidth = columns * terminal->average_width + m;
-\t\theight = rows * terminal->extents.height + m;
-\t\twidget_set_size(terminal->widget, width, height);
-\t}
-
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
-\tterminal->ios_configure_count++;
+    if "terminal->ios_configure_count++" in src:
+        # Upgrade prior iOS pace block that only unblocked on width>0.
+        old_block = """\tterminal->ios_configure_count++;
 \tif (terminal->pace_pipe >= 0 && width > 0 && height > 0) {
 \t\tint32_t c = columns, r = rows;
 
@@ -1098,6 +1103,126 @@ def patch_ios_resize_pace_order(src: str) -> str:
 \t\twwn_pty_ios_signal_shells();
 \t\twindow_schedule_redraw(terminal->window);
 \t\tterminal_ios_arm_pty_poll(terminal);
+\t}"""
+        old_block_signal_only = """\tterminal->ios_configure_count++;
+\tif (terminal->pace_pipe >= 0 && width > 0 && height > 0) {
+\t\tint32_t c = columns, r = rows;
+
+\t\tif (c < 1 && terminal->average_width >= 1.0)
+\t\t\tc = (width - m) / (int32_t) terminal->average_width;
+\t\tif (r < 1 && terminal->extents.height >= 1.0)
+\t\t\tr = (height - m) / (int32_t) terminal->extents.height;
+\t\tif (c < 1)
+\t\t\tc = width / 8;
+\t\tif (r < 1)
+\t\t\tr = height / 16;
+\t\tterminal_ios_unblock_shell(terminal, c, r);
+\t} else {
+\t\tif (columns >= 1 && rows >= 1)
+\t\t\tterminal_resize_cells(terminal, columns, rows);
+\t\twwn_pty_ios_signal_shells();
+\t\twindow_schedule_redraw(terminal->window);
+\t\tterminal_ios_arm_pty_poll(terminal);
+\t}"""
+        new_block = """\tterminal->ios_configure_count++;
+\tif (width > 0 && height > 0) {
+\t\tint32_t c = columns, r = rows;
+
+\t\tif (c < 1 && terminal->average_width >= 1.0)
+\t\t\tc = (width - m) / (int32_t) terminal->average_width;
+\t\tif (r < 1 && terminal->extents.height >= 1.0)
+\t\t\tr = (height - m) / (int32_t) terminal->extents.height;
+\t\tif (c < 1)
+\t\t\tc = width / 8;
+\t\tif (r < 1)
+\t\t\tr = height / 16;
+\t\tterminal_ios_apply_surface_size(terminal, c, r);
+\t\tif (terminal->pace_pipe >= 0)
+\t\t\tterminal_ios_unblock_shell(terminal, c, r);
+\t\telse {
+\t\t\tif (c >= 1 && r >= 1)
+\t\t\t\tterminal_resize_cells(terminal, c, r);
+\t\t\tterminal_ios_flush_pending_pty(terminal);
+\t\t\tterminal_master_consume(terminal);
+\t\t\twwn_pty_ios_signal_shells();
+\t\t\twindow_schedule_redraw(terminal->window);
+\t\t\tterminal_ios_arm_pty_poll(terminal);
+\t\t}
+\t} else {
+\t\tWWN_TERM_LOG("weston-terminal: configure 0x0 — preferred 80x24 surface\\n");
+\t\tterminal_ios_unblock_shell(terminal, 80, 24);
+\t}"""
+        if old_block in src:
+            return src.replace(old_block, new_block, 1)
+        if old_block_signal_only in src:
+            return src.replace(old_block_signal_only, new_block, 1)
+        return src
+
+    old = """\tif (terminal->pace_pipe >= 0) {
+\t\tclose(terminal->pace_pipe);
+\t\tterminal->pace_pipe = -1;
+\t}
+\tm = 2 * terminal->margin;
+\tcolumns = (width - m) / (int32_t) terminal->average_width;
+\trows = (height - m) / (int32_t) terminal->extents.height;
+
+\tif (!window_is_fullscreen(terminal->window) &&
+\t    !window_is_maximized(terminal->window)) {
+\t\twidth = columns * terminal->average_width + m;
+\t\theight = rows * terminal->extents.height + m;
+\t\twidget_set_size(terminal->widget, width, height);
+\t}
+
+\tterminal_resize_cells(terminal, columns, rows);"""
+    new = """\tint32_t host_w = width;
+\tint32_t host_h = height;
+\tm = 2 * terminal->margin;
+\tcolumns = (width - m) / (int32_t) terminal->average_width;
+\trows = (height - m) / (int32_t) terminal->extents.height;
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t/* Fill host compositor: never cell-snap SHM below xdg configure size. */
+\tif (host_w > 0 && host_h > 0)
+\t\twidget_set_size(terminal->widget, host_w, host_h);
+#else
+\tif (!window_is_fullscreen(terminal->window) &&
+\t    !window_is_maximized(terminal->window)) {
+\t\twidth = columns * terminal->average_width + m;
+\t\theight = rows * terminal->extents.height + m;
+\t\twidget_set_size(terminal->widget, width, height);
+\t}
+#endif
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\tterminal->ios_configure_count++;
+\tif (host_w > 0 && host_h > 0) {
+\t\tint32_t c = columns, r = rows;
+
+\t\tif (c < 1 && terminal->average_width >= 1.0)
+\t\t\tc = (host_w - m) / (int32_t) terminal->average_width;
+\t\tif (r < 1 && terminal->extents.height >= 1.0)
+\t\t\tr = (host_h - m) / (int32_t) terminal->extents.height;
+\t\tif (c < 1)
+\t\t\tc = host_w / 8;
+\t\tif (r < 1)
+\t\t\tr = host_h / 16;
+\t\t/* Exact host configure pixels (no floating cell-snap gutters). */
+\t\tterminal_ios_apply_configure_size(terminal, host_w, host_h, c, r);
+\t\tif (terminal->pace_pipe >= 0)
+\t\t\tterminal_ios_unblock_shell(terminal, c, r);
+\t\telse {
+\t\t\tif (c >= 1 && r >= 1)
+\t\t\t\tterminal_resize_cells(terminal, c, r);
+\t\t\tterminal_ios_flush_pending_pty(terminal);
+\t\t\tterminal_master_consume(terminal);
+\t\t\twwn_pty_ios_signal_shells();
+\t\t\twindow_schedule_redraw(terminal->window);
+\t\t\tterminal_ios_arm_pty_poll(terminal);
+\t\t}
+\t} else {
+\t\t/* xdg configure(0,0): client decides. Preferred 80×24 + SHM commit. */
+\t\tWWN_TERM_LOG("weston-terminal: configure 0x0 — preferred 80x24 surface\\n");
+\t\tterminal_ios_unblock_shell(terminal, 80, 24);
 \t}
 #else
 \tif (terminal->pace_pipe >= 0) {
@@ -1109,6 +1234,111 @@ def patch_ios_resize_pace_order(src: str) -> str:
     if old not in src:
         raise SystemExit("resize_handler pace order anchor missing in terminal.c")
     return src.replace(old, new, 1)
+
+
+def patch_ios_honor_host_configure_size(src: str) -> str:
+    """Upgrade already-patched resize_handler to honor host configure pixels.
+
+    Stock weston-terminal snaps floating windows to cell multiples (e.g.
+    386×730 from a 402×778 configure). On iOS that leaves gutters vs the
+    compositor container even when the host injects a fill configure.
+    """
+    if "surface size %dx%d for grid %dx%d (host configure)" in src:
+        return src
+
+    old = """\tm = 2 * terminal->margin;
+\tcolumns = (width - m) / (int32_t) terminal->average_width;
+\trows = (height - m) / (int32_t) terminal->extents.height;
+
+\tif (!window_is_fullscreen(terminal->window) &&
+\t    !window_is_maximized(terminal->window)) {
+\t\twidth = columns * terminal->average_width + m;
+\t\theight = rows * terminal->extents.height + m;
+\t\twidget_set_size(terminal->widget, width, height);
+\t}
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\tterminal->ios_configure_count++;
+\tif (width > 0 && height > 0) {
+\t\tint32_t c = columns, r = rows;
+
+\t\tif (c < 1 && terminal->average_width >= 1.0)
+\t\t\tc = (width - m) / (int32_t) terminal->average_width;
+\t\tif (r < 1 && terminal->extents.height >= 1.0)
+\t\t\tr = (height - m) / (int32_t) terminal->extents.height;
+\t\tif (c < 1)
+\t\t\tc = width / 8;
+\t\tif (r < 1)
+\t\t\tr = height / 16;
+\t\t/* Non-zero configure: keep host suggestion; still force widget size. */
+\t\tterminal_ios_apply_surface_size(terminal, c, r);"""
+    new = """\tint32_t host_w = width;
+\tint32_t host_h = height;
+\tm = 2 * terminal->margin;
+\tcolumns = (width - m) / (int32_t) terminal->average_width;
+\trows = (height - m) / (int32_t) terminal->extents.height;
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\tif (host_w > 0 && host_h > 0)
+\t\twidget_set_size(terminal->widget, host_w, host_h);
+#else
+\tif (!window_is_fullscreen(terminal->window) &&
+\t    !window_is_maximized(terminal->window)) {
+\t\twidth = columns * terminal->average_width + m;
+\t\theight = rows * terminal->extents.height + m;
+\t\twidget_set_size(terminal->widget, width, height);
+\t}
+#endif
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\tterminal->ios_configure_count++;
+\tif (host_w > 0 && host_h > 0) {
+\t\tint32_t c = columns, r = rows;
+
+\t\tif (c < 1 && terminal->average_width >= 1.0)
+\t\t\tc = (host_w - m) / (int32_t) terminal->average_width;
+\t\tif (r < 1 && terminal->extents.height >= 1.0)
+\t\t\tr = (host_h - m) / (int32_t) terminal->extents.height;
+\t\tif (c < 1)
+\t\t\tc = host_w / 8;
+\t\tif (r < 1)
+\t\t\tr = host_h / 16;
+\t\tterminal_ios_apply_configure_size(terminal, host_w, host_h, c, r);"""
+    if old in src:
+        src = src.replace(old, new, 1)
+
+    # Helper used by resize_handler (exact host pixels). Call sites may already
+    # mention the name; look for the definition specifically.
+    if "terminal_ios_apply_configure_size(struct terminal *terminal, int32_t width" not in src:
+        anchor = """static void
+terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows)
+{"""
+        helper = """static void
+terminal_ios_apply_configure_size(struct terminal *terminal, int32_t width,
+\t\t\t\t  int32_t height, int32_t columns, int32_t rows)
+{
+\tif (width < 1 || height < 1)
+\t\treturn;
+\tterminal_ios_ensure_font_metrics(terminal);
+\twidget_set_size(terminal->widget, width, height);
+\tWWN_TERM_INFO("weston-terminal: surface size %dx%d for grid %dx%d (host configure)\\n",
+\t\t      width, height, columns, rows);
+}
+
+static void
+terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows)
+{"""
+        if anchor not in src:
+            raise SystemExit("terminal_ios_apply_surface_size anchor missing for configure-size helper")
+        src = src.replace(anchor, helper, 1)
+
+    decl_old = "static void terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows);"
+    decl_marker = "static void terminal_ios_apply_configure_size(struct terminal *terminal, int32_t width, int32_t height, int32_t columns, int32_t rows);"
+    decl_new = decl_marker + "\n" + decl_old
+    if decl_old in src and decl_marker not in src:
+        src = src.replace(decl_old, decl_new, 1)
+
+    return src
 
 
 def patch_ios_resize_shell_refresh(src: str) -> str:
@@ -1184,7 +1414,91 @@ def patch_ios_pty_poll_field(src: str) -> str:
 
 def patch_ios_pty_poll(src: str) -> str:
     """Poll PTY master on a timer; epoll on socketpair PTY is unreliable on iOS."""
+    if "terminal_ios_apply_surface_size" in src:
+        return src
     if "terminal_ios_pending_append" in src:
+        # Upgrade older poll helpers: replace unblock_shell body so configure(0,0)
+        # still produces a non-zero SHM surface (PTY-only blackscreen fix).
+        old_unblock = """static void
+terminal_ios_unblock_shell(struct terminal *terminal, int32_t columns, int32_t rows)
+{
+\tif (terminal->pace_pipe < 0)
+\t\treturn;
+\tif (columns < 1)
+\t\tcolumns = 80;
+\tif (rows < 1)
+\t\trows = 24;
+\tterminal_resize_cells(terminal, columns, rows);
+\tterminal_ios_flush_pending_pty(terminal);
+\tclose(terminal->pace_pipe);
+\tterminal->pace_pipe = -1;
+\tWWN_TERM_INFO("weston-terminal: shell pace unblocked (grid %dx%d)\\n",
+\t\t      columns, rows);
+\twindow_schedule_redraw(terminal->window);
+\tterminal_ios_arm_pty_poll(terminal);
+}"""
+        new_unblock = """static void
+terminal_ios_ensure_font_metrics(struct terminal *terminal)
+{
+\tif (terminal->average_width >= 1.0 && terminal->extents.height >= 1.0)
+\t\treturn;
+\t{
+\t\tdouble fs = (double)(option_font_size > 0 ? option_font_size : 14);
+
+\t\tif (terminal->average_width < 1.0)
+\t\t\tterminal->average_width = ceil(fs * 0.6);
+\t\tif (terminal->extents.height < 1.0) {
+\t\t\tterminal->extents.ascent = fs;
+\t\t\tterminal->extents.descent = ceil(fs * 0.25);
+\t\t\tterminal->extents.height = terminal->extents.ascent +
+\t\t\t\t\t\t  terminal->extents.descent;
+\t\t}
+\t}
+}
+
+static void
+terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows)
+{
+\tint32_t m, w, h;
+
+\tterminal_ios_ensure_font_metrics(terminal);
+\tif (columns < 1)
+\t\tcolumns = 80;
+\tif (rows < 1)
+\t\trows = 24;
+\tm = 2 * terminal->margin;
+\tw = columns * (int32_t) terminal->average_width + m;
+\th = rows * (int32_t) terminal->extents.height + m;
+\tif (w < 16)
+\t\tw = 80 * 8 + m;
+\tif (h < 16)
+\t\th = 24 * 16 + m;
+\twidget_set_size(terminal->widget, w, h);
+\tWWN_TERM_INFO("weston-terminal: surface size %dx%d for grid %dx%d\\n",
+\t\t      w, h, columns, rows);
+}
+
+static void
+terminal_ios_unblock_shell(struct terminal *terminal, int32_t columns, int32_t rows)
+{
+\tif (columns < 1)
+\t\tcolumns = 80;
+\tif (rows < 1)
+\t\trows = 24;
+\tterminal_ios_apply_surface_size(terminal, columns, rows);
+\tterminal_resize_cells(terminal, columns, rows);
+\tterminal_ios_flush_pending_pty(terminal);
+\tif (terminal->pace_pipe >= 0) {
+\t\tclose(terminal->pace_pipe);
+\t\tterminal->pace_pipe = -1;
+\t}
+\tWWN_TERM_INFO("weston-terminal: shell pace unblocked (grid %dx%d)\\n",
+\t\t      columns, rows);
+\twindow_schedule_redraw(terminal->window);
+\tterminal_ios_arm_pty_poll(terminal);
+}"""
+        if old_unblock in src:
+            src = src.replace(old_unblock, new_unblock, 1)
         return src
 
     forward_decls = """
@@ -1193,6 +1507,8 @@ static void terminal_data(struct terminal *terminal, const char *data, size_t le
 static void terminal_ios_pending_append(struct terminal *terminal, const char *buf, size_t len);
 static void terminal_ios_flush_pending_pty(struct terminal *terminal);
 static void terminal_ios_arm_pty_poll(struct terminal *terminal);
+static void terminal_ios_ensure_font_metrics(struct terminal *terminal);
+static void terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows);
 static void terminal_ios_unblock_shell(struct terminal *terminal, int32_t columns, int32_t rows);
 static void terminal_ios_pace_fallback_cb(struct toytimer *tt);
 static void terminal_master_consume(struct terminal *terminal);
@@ -1247,18 +1563,63 @@ terminal_ios_arm_pty_poll(struct terminal *terminal)
 }
 
 static void
-terminal_ios_unblock_shell(struct terminal *terminal, int32_t columns, int32_t rows)
+terminal_ios_ensure_font_metrics(struct terminal *terminal)
 {
-\tif (terminal->pace_pipe < 0)
+\tif (terminal->average_width >= 1.0 && terminal->extents.height >= 1.0)
 \t\treturn;
+\t{
+\t\tdouble fs = (double)(option_font_size > 0 ? option_font_size : 14);
+
+\t\tif (terminal->average_width < 1.0)
+\t\t\tterminal->average_width = ceil(fs * 0.6);
+\t\tif (terminal->extents.height < 1.0) {
+\t\t\tterminal->extents.ascent = fs;
+\t\t\tterminal->extents.descent = ceil(fs * 0.25);
+\t\t\tterminal->extents.height = terminal->extents.ascent +
+\t\t\t\t\t\t  terminal->extents.descent;
+\t\t}
+\t}
+}
+
+static void
+terminal_ios_apply_surface_size(struct terminal *terminal, int32_t columns, int32_t rows)
+{
+\tint32_t m, w, h;
+
+\tterminal_ios_ensure_font_metrics(terminal);
 \tif (columns < 1)
 \t\tcolumns = 80;
 \tif (rows < 1)
 \t\trows = 24;
+\tm = 2 * terminal->margin;
+\tw = columns * (int32_t) terminal->average_width + m;
+\th = rows * (int32_t) terminal->extents.height + m;
+\tif (w < 16)
+\t\tw = 80 * 8 + m;
+\tif (h < 16)
+\t\th = 24 * 16 + m;
+\t/* xdg configure(0,0) + skipped terminal_resize on Apple mobile left the
+\t * toytoolkit widget at 0×0, so redraw never attached an SHM buffer while
+\t * the PTY/grid still ran. Force a client-preferred pixel size. */
+\twidget_set_size(terminal->widget, w, h);
+\tWWN_TERM_INFO("weston-terminal: surface size %dx%d for grid %dx%d\\n",
+\t\t      w, h, columns, rows);
+}
+
+static void
+terminal_ios_unblock_shell(struct terminal *terminal, int32_t columns, int32_t rows)
+{
+\tif (columns < 1)
+\t\tcolumns = 80;
+\tif (rows < 1)
+\t\trows = 24;
+\tterminal_ios_apply_surface_size(terminal, columns, rows);
 \tterminal_resize_cells(terminal, columns, rows);
 \tterminal_ios_flush_pending_pty(terminal);
-\tclose(terminal->pace_pipe);
-\tterminal->pace_pipe = -1;
+\tif (terminal->pace_pipe >= 0) {
+\t\tclose(terminal->pace_pipe);
+\t\tterminal->pace_pipe = -1;
+\t}
 \tWWN_TERM_INFO("weston-terminal: shell pace unblocked (grid %dx%d)\\n",
 \t\t      columns, rows);
 \twindow_schedule_redraw(terminal->window);
@@ -1528,6 +1889,7 @@ def main() -> None:
     src = patch_ios_resize_redraw(src)
     src = patch_terminal_csd_geometry_helper(src)
     src = patch_ios_resize_pace_order(src)
+    src = patch_ios_honor_host_configure_size(src)
     src = patch_terminal_csd_geometry_call(src)
     src = patch_ios_resize_shell_refresh(src)
     src = patch_ios_skip_terminal_run_resize(src)

@@ -63,21 +63,18 @@ stdenv.mkDerivation rec {
     sed -i 's/\brunning;/g_simple_shm_running;/g' $out/clients/simple-shm.c
     sed -i 's/\brunning &&/g_simple_shm_running \&\&/g' $out/clients/simple-shm.c
 
+    # Do NOT inject --width/--height argv parsing. Window size is negotiated
+    # with the host compositor via xdg_toplevel (0×0 configure → client default
+    # → host adopts commit). Custom size CLI patches fought that path.
     awk '
       /^weston_simple_shm_main/ { in_main = 1 }
-      /^\{/ && in_main { 
-        print; 
+      /^\{/ && in_main {
+        print;
         print "\tg_simple_shm_running = 1;";
-        print "\tint width = 250, height = 250;";
-        print "\tfor (int i = 1; i < argc; i++) {";
-        print "\t\tif (strcmp(argv[i], \"--width\") == 0 && i + 1 < argc) width = atoi(argv[++i]);";
-        print "\t\telse if (strcmp(argv[i], \"--height\") == 0 && i + 1 < argc) height = atoi(argv[++i]);";
-        print "\t}";
-        in_main = 0; 
-        next 
+        in_main = 0;
+        next
       }
       /display = create_display\(\);/ { print; print "\tif (!display) return 1;"; next }
-      /window = create_window/ { print "\twindow = create_window(display, width, height);" ; next }
       { print }
     ' $out/clients/simple-shm.c > $out/clients/simple-shm.c.tmp
     mv $out/clients/simple-shm.c.tmp $out/clients/simple-shm.c
