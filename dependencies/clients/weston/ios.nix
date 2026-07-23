@@ -531,6 +531,59 @@ elif "wwn_mobile_display_roundtrip(display)" not in text:
 #define wl_display_dispatch(display) wwn_mobile_display_dispatch(display)""",
         1,
     )
+
+# --- wwn #96: refcount live displays so the process-global cairo/fontconfig
+# teardown (cleanup_after_cairo -> cairo_debug_reset_static_data / FcFini) only
+# runs when the LAST toytoolkit display is destroyed. In the Apple in-process
+# model every *_main client shares one address space and one copy of window.c,
+# so a second client tearing down while another still holds cairo/pango state
+# aborts (SIGABRT in cairo_debug_reset_static_data). All in-process clients
+# share this file-static counter, so it correctly tracks displays across them.
+if "wwn_toytoolkit_live_displays" not in text:
+    counter_anchor = (
+        "struct display *\n"
+        "display_create(int *argc, char *argv[])\n"
+        "{\n"
+        "\tstruct display *d;\n"
+    )
+    if counter_anchor not in text:
+        raise SystemExit("window.c display_create definition anchor missing (refcount)")
+    text = text.replace(
+        counter_anchor,
+        "/* wwn #96: live toytoolkit displays across all in-process clients. */\n"
+        "static int wwn_toytoolkit_live_displays;\n\n"
+        + counter_anchor,
+        1,
+    )
+
+    # Increment after the last free(d) early-exit and before the roundtrip path
+    # that can call display_destroy(d), so the count stays balanced on both the
+    # success and roundtrip-failure paths.
+    incr_anchor = (
+        "\td->registry = wl_display_get_registry(d->display);\n"
+        "\twl_registry_add_listener(d->registry, &registry_listener, d);\n"
+    )
+    if incr_anchor not in text:
+        raise SystemExit("window.c display_create registry anchor missing (refcount)")
+    text = text.replace(
+        incr_anchor,
+        incr_anchor + "\n\twwn_toytoolkit_live_displays++;\n",
+        1,
+    )
+
+    # Only reset process-global cairo/fontconfig state on the last destroy.
+    cleanup_anchor = "\tcleanup_after_cairo();\n"
+    if cleanup_anchor not in text:
+        raise SystemExit("window.c cleanup_after_cairo anchor missing (refcount)")
+    text = text.replace(
+        cleanup_anchor,
+        "\tif (--wwn_toytoolkit_live_displays <= 0) {\n"
+        "\t\twwn_toytoolkit_live_displays = 0;\n"
+        "\t\tcleanup_after_cairo();\n"
+        "\t}\n",
+        1,
+    )
+
 path.write_text(text)
 PY
     cp ${./terminal-patches/patch-window-csd.py} ./patch-window-csd.py
