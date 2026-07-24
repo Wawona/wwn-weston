@@ -64,6 +64,16 @@
           watchos = null;
           macos = null;
         };
+        weston-compositor-gl = withPlatformVariants {
+          android = westonDir + "/compositor-android-gl.nix";
+          wearos = null;
+          ios = null;
+          tvos = null;
+          ipados = null;
+          visionos = null;
+          watchos = null;
+          macos = null;
+        };
         weston-simple-shm = withPlatformVariants {
           android = shmDir + "/android.nix";
           ios = shmDir + "/ios.nix";

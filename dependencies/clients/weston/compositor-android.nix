@@ -10,6 +10,7 @@
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
   androidMesonSandbox,
   enableIlandDrm ? false,
+  enableBackendDrm ? false,
   ilandSrc ? null,
   ...
 }:
@@ -170,7 +171,7 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply rec {
   ++ (
     if enableIlandDrm then
       [
-        "-Dbackend-drm=true"
+        "-Dbackend-drm=${if enableBackendDrm then "true" else "false"}"
         "-Dbackend-default=wayland"
         "-Drenderer-gl=true"
         "-Dbackend-drm-screencast-vaapi=false"
@@ -191,6 +192,7 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply rec {
     # Static in-process modules (no dlopen on iOS)
     sed -i 's/shared_library(/static_library(/g' libweston/backend-wayland/meson.build
     sed -i 's/shared_library(/static_library(/g' libweston/backend-headless/meson.build
+    sed -i 's/shared_library(/static_library(/g' libweston/renderer-gl/meson.build
     sed -i 's/shared_library(/static_library(/g' desktop-shell/meson.build
     sed -i "/subdir('wcap')/d" meson.build
     sed -i "/^exe_weston = executable(/,/^)/d" compositor/meson.build
@@ -279,6 +281,9 @@ int weston_linux_sync_file_read_timestamp(int fd, struct timespec *ts)
 }
 EOF
     sed -i "s/'linux-sync-file.c'/'..\/include\/linux-sync-file-stub.c'/g" libweston/meson.build
+    # Android's in-process host owns device access; never instantiate a Linux
+    # seat daemon/session launcher in either renderer variant.
+    sed -i "s/'launcher-libseat.c'/'..\/include\/empty.c'/g" libweston/meson.build
 
     sed -i "s|message('The default backend is ' + backend_default)|message('Skipping backend validation for mobile compositor build')|g" meson.build
     sed -i "s/dependency('libinput'/dependency('libinput', required: false/g" meson.build
@@ -558,7 +563,7 @@ path.write_text(text)
 PY
 
     # Apple shims (mirror macos.nix)
-    mkdir -p include/sys include/libudev include/libinput include/libevdev include/linux include/GLES2 include/EGL include/KHR
+    mkdir -p include/sys include/libudev include/libinput include/libevdev include/libseat include/linux include/GLES2 include/EGL include/KHR
 
     cp ${androidSignalPolyfill} include/wwn-android-signal-polyfill.h
     test -s include/wwn-android-signal-polyfill.h
@@ -661,6 +666,27 @@ EOF
 #define _LIBUDEV_H
 struct udev;
 struct udev_device;
+const char *udev_device_get_syspath(struct udev_device *);
+#endif
+EOF
+
+    cat > include/libseat/libseat.h <<'EOF'
+#ifndef _LIBSEAT_H
+#define _LIBSEAT_H
+#include <stdarg.h>
+struct libseat;
+enum libseat_log_level { LIBSEAT_LOG_LEVEL_NONE=0, LIBSEAT_LOG_LEVEL_INFO=1 };
+struct libseat_seat_listener {
+  void (*enable_seat)(struct libseat *, void *);
+  void (*disable_seat)(struct libseat *, void *);
+};
+struct libseat *libseat_open_seat(const struct libseat_seat_listener *, void *);
+void libseat_close_seat(struct libseat *);
+int libseat_get_fd(struct libseat *);
+int libseat_dispatch(struct libseat *, int);
+int libseat_disable_seat(struct libseat *);
+typedef void (*libseat_log_handler)(enum libseat_log_level, const char *, va_list);
+void libseat_set_log_handler(libseat_log_handler);
 #endif
 EOF
 
@@ -745,6 +771,7 @@ EOF
     mkdir -p include/wayland
     cp ${wayland_cursor_h} include/wayland/wayland-cursor.h
     cp ${wayland_xcursor_h} include/wayland/xcursor.h
+    cp ${libwayland}/include/wayland-*.h include/
 
     cat > include/EGL/egl.h <<'EOF'
 #ifndef _EGL_H
@@ -761,6 +788,16 @@ typedef unsigned int EGLBoolean;
 #endif
 EOF
     touch include/EGL/eglext.h include/EGL/eglplatform.h include/GLES2/gl2.h include/GLES2/glext.h include/KHR/khrplatform.h
+${lib.optionalString enableIlandDrm ''
+    # Replace configure-only empty headers with the selected ANGLE API for the
+    # real GL renderer. Leaving the stubs first on the include path erases
+    # EGLenum/GL types and mixes them with NDK gl2ext.h.
+    cp -f ${angle}/include/EGL/*.h include/EGL/
+    cp -f ${angle}/include/GLES2/*.h include/GLES2/
+    cp -f ${angle}/include/KHR/*.h include/KHR/
+    cp -f ${iland}/include/gbm.h include/gbm.h
+    cp -f ${iland}/include/xf86drmMode.h include/xf86drmMode.h
+''}
 
     python3 - <<'PY'
 from pathlib import Path
@@ -802,6 +839,7 @@ PY
 prefix=$PWD
 includedir=$PWD/include
 Name: libudev
+Description: in-process iland udev compatibility
 Version: 255
 Cflags: -I$PWD/include
 EOF
@@ -809,6 +847,7 @@ EOF
 prefix=$PWD
 includedir=$PWD/include
 Name: libinput
+Description: in-process iland input compatibility
 Version: 1.25.0
 Cflags: -I$PWD/include
 EOF
@@ -816,16 +855,61 @@ EOF
 prefix=$PWD
 includedir=$PWD/include
 Name: libevdev
+Description: in-process iland evdev compatibility
 Version: 1.13.0
 Cflags: -I$PWD/include
+EOF
+    cat > stub-pkgconfig/libseat.pc <<EOF
+prefix=$PWD
+includedir=$PWD/include
+Name: libseat
+Description: in-process iland seat compatibility
+Version: 0.8.0
+Cflags: -I$PWD/include/libseat
 EOF
     cat > stub-pkgconfig/libdrm.pc <<EOF
 prefix=$PWD
 includedir=$PWD/include
 Name: libdrm
+Description: in-process iland DRM compatibility
 Version: 2.4.120
 Cflags: -I$PWD/include
 EOF
+${lib.optionalString enableIlandDrm ''
+    # The DRM/GL product variant uses the one selected L1 ANGLE stack.
+    # Publish it to Meson explicitly; never satisfy this check with host Mesa
+    # or disable GL and silently regress Android to pixman (P1/R10).
+    cat > stub-pkgconfig/egl.pc <<EOF
+prefix=${angle}
+libdir=''${prefix}/lib
+includedir=''${prefix}/include
+Name: egl
+Description: ANGLE EGL for Android iland
+Version: 1.5
+Libs: ${angle}/lib/libEGL.so
+Cflags: -I''${includedir}
+EOF
+    cat > stub-pkgconfig/glesv2.pc <<EOF
+prefix=${angle}
+libdir=''${prefix}/lib
+includedir=''${prefix}/include
+Name: glesv2
+Description: ANGLE GLESv2 for Android iland
+Version: 3.0
+Libs: ${angle}/lib/libGLESv2.so
+Cflags: -I''${includedir}
+EOF
+    cat > stub-pkgconfig/gbm.pc <<EOF
+prefix=${iland}
+libdir=''${prefix}/lib
+includedir=''${prefix}/include
+Name: gbm
+Description: iland AHardwareBuffer-backed GBM
+Version: 24.0.0
+Libs: -L''${libdir} -liland_userland
+Cflags: -I''${includedir}
+EOF
+''}
     cat > stub-pkgconfig/wayland-scanner.pc <<EOF
 prefix=${waylandScanner}
 exec_prefix=''${prefix}
@@ -865,7 +949,7 @@ cpu = 'aarch64'
 endian = 'little'
 
 [built-in options]
-c_args = ['-include', '$PWD/include/wwn-android-signal-polyfill.h', '-fPIC', '-D_GNU_SOURCE', '-D_POSIX_C_SOURCE=200809L']
+c_args = ['-include', '$PWD/include/wwn-android-signal-polyfill.h', '-I${libwayland}/include', '-fPIC', '-D_GNU_SOURCE', '-D_POSIX_C_SOURCE=200809L']
 cpp_args = ['-include', '$PWD/include/wwn-android-signal-polyfill.h', '-fPIC', '-D_GNU_SOURCE']
 c_link_args = ['-L${libffi}/lib', '-L${androidToolchain.androidNdkAbiLibDir}', '-lm', '-ldl']
 cpp_link_args = ['-L${libffi}/lib', '-L${androidToolchain.androidNdkAbiLibDir}', '-lm', '-ldl']
