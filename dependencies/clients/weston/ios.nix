@@ -125,6 +125,9 @@ stdenv.mkDerivation rec {
     url = "https://gitlab.freedesktop.org/wayland/weston/-/releases/${version}/downloads/weston-${version}.tar.xz";
     sha256 = "sha256-Uv8dSqI5Si5BbIWjOLYnzpf6cdQ+t2L9Sq8UXTb8eVo=";
   };
+  patches = [
+    ./patches/0001-constraints-mark-reused-buffer-busy.patch
+  ];
 
   # wayland-cursor sources are compiled here for headers/TU glue; os_create_anonymous_file
   # comes from libwayland-cursor at final link time (not shared/os-compatibility.c).

@@ -96,6 +96,9 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply rec {
     url = "https://gitlab.freedesktop.org/wayland/weston/-/releases/${version}/downloads/weston-${version}.tar.xz";
     sha256 = "sha256-Uv8dSqI5Si5BbIWjOLYnzpf6cdQ+t2L9Sq8UXTb8eVo=";
   };
+  patches = [
+    ./patches/0001-constraints-mark-reused-buffer-busy.patch
+  ];
 
   wayland_cursor_h = fetchurl {
     url = "https://gitlab.freedesktop.org/wayland/wayland/-/raw/1.23.1/cursor/wayland-cursor.h";
