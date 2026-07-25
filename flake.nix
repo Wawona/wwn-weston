@@ -53,7 +53,7 @@
           ipados = westonDir + "/compositor-ios.nix";
           visionos = westonDir + "/compositor-visionos.nix";
           watchos = westonDir + "/compositor-watchos.nix";
-          macos = null;
+          macos = westonDir + "/compositor-macos-drm.nix";
         };
         weston-compositor-drm = withPlatformVariants {
           android = westonDir + "/compositor-android-drm.nix";
@@ -62,7 +62,7 @@
           ipados = westonDir + "/compositor-ios-drm.nix";
           visionos = null;
           watchos = null;
-          macos = null;
+          macos = westonDir + "/compositor-macos-drm.nix";
         };
         weston-compositor-gl = withPlatformVariants {
           android = westonDir + "/compositor-android-gl.nix";
@@ -72,7 +72,7 @@
           ipados = null;
           visionos = null;
           watchos = null;
-          macos = null;
+          macos = westonDir + "/compositor-macos-drm.nix";
         };
         weston-simple-shm = withPlatformVariants {
           android = shmDir + "/android.nix";
@@ -98,6 +98,7 @@
         (if isDarwin then {
           weston-ios = tc.buildForIOS "weston" { };
           weston-macos = tc.buildForMacOS "weston" { };
+          weston-compositor-macos = tc.buildForMacOS "weston-compositor-drm" { };
           weston-compositor-ios = tc.buildForIOS "weston-compositor" { };
           weston-simple-shm-ios = tc.buildForIOS "weston-simple-shm" { };
         } else { }));

@@ -11,7 +11,8 @@
   buildPackages,
   buildModule,
   simulator ? false,
-  iosToolchain,
+  iosToolchain ? null,
+  macos ? false,
   enableIlandDrm ? false,
   # Injected by wwn-toolchain (xcodeUtils === apple toolchain; was
   # ../../utils/xcode-wrapper.nix), wwn-iland source tree (udev/gbm shim copies;
@@ -24,30 +25,32 @@
 }:
 
 let
-  libwayland = buildModule.buildForIOS "libwayland" { inherit simulator; };
-  xkbcommon = buildModule.buildForIOS "xkbcommon" { inherit simulator; };
-  epollShim = buildModule.buildForIOS "epoll-shim" { inherit simulator; };
-  pixman = buildModule.buildForIOS "pixman" { inherit simulator; };
-  cairo = buildModule.buildForIOS "cairo" { inherit simulator; };
-  pango = buildModule.buildForIOS "pango" { inherit simulator; };
-  fontconfig = buildModule.buildForIOS "fontconfig" { inherit simulator; };
-  freetype = buildModule.buildForIOS "freetype" { inherit simulator; };
-  glib = buildModule.buildForIOS "glib" { inherit simulator; };
-  harfbuzz = buildModule.buildForIOS "harfbuzz" { inherit simulator; };
-  fribidi = buildModule.buildForIOS "fribidi" { inherit simulator; };
-  libpng = buildModule.buildForIOS "libpng" { inherit simulator; };
-  expat = buildModule.buildForIOS "expat" { inherit simulator; };
-  libffi = buildModule.buildForIOS "libffi" { inherit simulator; };
-  pcre2 = buildModule.buildForIOS "pcre2" { inherit simulator; };
+  libwayland = if macos then buildModule.buildForMacOS "libwayland" { } else buildModule.buildForIOS "libwayland" { inherit simulator; };
+  xkbcommon = if macos then pkgs.libxkbcommon else buildModule.buildForIOS "xkbcommon" { inherit simulator; };
+  epollShim = if macos then buildModule.buildForMacOS "epoll-shim" { } else buildModule.buildForIOS "epoll-shim" { inherit simulator; };
+  pixman = if macos then pkgs.pixman else buildModule.buildForIOS "pixman" { inherit simulator; };
+  cairo = if macos then pkgs.cairo else buildModule.buildForIOS "cairo" { inherit simulator; };
+  pango = if macos then pkgs.pango else buildModule.buildForIOS "pango" { inherit simulator; };
+  fontconfig = if macos then pkgs.fontconfig else buildModule.buildForIOS "fontconfig" { inherit simulator; };
+  freetype = if macos then pkgs.freetype else buildModule.buildForIOS "freetype" { inherit simulator; };
+  glib = if macos then pkgs.glib else buildModule.buildForIOS "glib" { inherit simulator; };
+  harfbuzz = if macos then pkgs.harfbuzz else buildModule.buildForIOS "harfbuzz" { inherit simulator; };
+  fribidi = if macos then pkgs.fribidi else buildModule.buildForIOS "fribidi" { inherit simulator; };
+  libpng = if macos then pkgs.libpng else buildModule.buildForIOS "libpng" { inherit simulator; };
+  expat = if macos then pkgs.expat else buildModule.buildForIOS "expat" { inherit simulator; };
+  libffi = if macos then pkgs.libffi else buildModule.buildForIOS "libffi" { inherit simulator; };
+  pcre2 = if macos then pkgs.pcre2 else buildModule.buildForIOS "pcre2" { inherit simulator; };
 
   iland =
     if enableIlandDrm then
-      buildModule.buildForIOS "iland" { inherit simulator; }
+      if macos then buildModule.buildForMacOS "iland" { }
+      else buildModule.buildForIOS "iland" { inherit simulator; }
     else
       null;
   angle =
     if enableIlandDrm then
-      buildModule.buildForIOS "angle" { inherit simulator; }
+      if macos then buildModule.buildForMacOS "angle" { }
+      else buildModule.buildForIOS "angle" { inherit simulator; }
     else
       null;
 
@@ -63,9 +66,11 @@ let
       fribidi libpng expat libffi pcre2 epollShim
     ]
     ++ lib.optionals enableIlandDrm [ iland angle ];
-  pkgConfigPath = lib.concatStringsSep ":" (map (d: "${d}/lib/pkgconfig") crossDeps);
+  pkgConfigPath = lib.concatStringsSep ":" (
+    map (d: "${lib.getDev d}/lib/pkgconfig") crossDeps
+  );
   crossPkgConfigDirs = lib.concatStringsSep "', '" (
-    (map (d: "${d}/lib/pkgconfig") crossDeps)
+    (map (d: "${lib.getDev d}/lib/pkgconfig") crossDeps)
     ++ [ "${buildPackages.wayland-protocols}/share/pkgconfig" ]
   );
 
@@ -98,14 +103,22 @@ EOF
   };
 
   platformInfo = import "${toolchainSrc}/dependencies/toolchains/apple-mobile-platform.nix";
-  mobile = platformInfo { inherit iosToolchain simulator; };
+  mobile =
+    if macos then {
+      isTVOS = false;
+      isVisionOS = false;
+      isWatchOS = false;
+      minVersion = "12.0";
+      mesonSubsystem = "macos";
+    } else platformInfo { inherit iosToolchain simulator; };
   isTVOS = mobile.isTVOS;
   isVisionOS = mobile.isVisionOS;
   isWatchOS = mobile.isWatchOS;
   mobileMinVersion = mobile.minVersion;
+  targetCpu = if stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64";
 in
 stdenv.mkDerivation rec {
-  pname = "weston-compositor-apple-mobile";
+  pname = if macos then "weston-compositor-macos" else "weston-compositor-apple-mobile";
   version = "13.0.0";
   __noChroot = true;
 
@@ -235,6 +248,9 @@ stdenv.mkDerivation rec {
     sed -i 's/shared_library(/static_library(/g' libweston/renderer-gl/meson.build
     sed -i 's/^weston_backend_init(/wwn_weston_drm_backend_init(/' libweston/backend-drm/drm.c
     sed -i 's/^weston_module_init(/wwn_gl_renderer_module_init(/' libweston/renderer-gl/gl-renderer.c
+    # Global client open() redirect must not rewrite launcher interface member
+    # calls (`iface->open(...)`). The launcher implementation remains redirected.
+    sed -i '1i#undef open' libweston/launcher-util.c
     ''}
     sed -i "/subdir('wcap')/d" meson.build
     sed -i "/^exe_weston = executable(/,/^)/d" compositor/meson.build
@@ -955,7 +971,20 @@ EOF
   '';
 
   preConfigure = ''
-    ${iosToolchain.mkIOSBuildEnv { inherit simulator; minVersion = mobileMinVersion; }}
+    ${if macos then ''
+      if [ -z "''${XCODE_APP:-}" ]; then
+        XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode)
+      fi
+      export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+      export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
+      export APPLE_SDK_NAME=macosx
+      export SDKROOT="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
+      export XCODE_CLANG="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+      export XCODE_CLANGXX="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++"
+      export IOS_ARCH="${if stdenv.hostPlatform.isAarch64 then "arm64" else "x86_64"}"
+      export APPLE_DEPLOYMENT_FLAG="-mmacosx-version-min=${mobileMinVersion}"
+      export APPLE_LINKER_TARGET=""
+    '' else iosToolchain.mkIOSBuildEnv { inherit simulator; minVersion = mobileMinVersion; }}
 
     export NIX_CFLAGS_COMPILE=""
     export NIX_CXXFLAGS_COMPILE=""
@@ -1107,8 +1136,8 @@ wayland-scanner = '${waylandScanner}/bin/wayland-scanner'
 
 [host_machine]
 system = 'darwin'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
+cpu_family = '${targetCpu}'
+cpu = '${targetCpu}'
 endian = 'little'
 subsystem = '${mobile.mesonSubsystem}'
 
@@ -1132,8 +1161,8 @@ wayland-scanner = '${waylandScanner}/bin/wayland-scanner'
 
 [host_machine]
 system = 'darwin'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
+cpu_family = '${targetCpu}'
+cpu = '${targetCpu}'
 endian = 'little'
 subsystem = '${mobile.mesonSubsystem}'
 
