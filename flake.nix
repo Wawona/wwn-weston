@@ -33,6 +33,7 @@
 
       westonDir = ./dependencies/clients/weston;
       shmDir = ./dependencies/libs/weston-simple-shm;
+      simpleEglDir = ./dependencies/clients/weston-simple-egl;
     in
     {
       registryFragment = {
@@ -74,6 +75,18 @@
           watchos = null;
           macos = westonDir + "/compositor-macos-drm.nix";
         };
+        # Built outside weston's meson so it can link iland's Wayland-EGL winsys
+        # instead of the wayland-egl stub; Apple mobile still has a stub client
+        # until the same wiring lands there.
+        weston-simple-egl = withPlatformVariants {
+          android = null;
+          ios = null;
+          tvos = null;
+          ipados = null;
+          visionos = null;
+          watchos = null;
+          macos = simpleEglDir + "/macos.nix";
+        };
         weston-simple-shm = withPlatformVariants {
           android = shmDir + "/android.nix";
           ios = shmDir + "/ios.nix";
@@ -101,6 +114,7 @@
           weston-compositor-macos = tc.buildForMacOS "weston-compositor-drm" { };
           weston-compositor-ios = tc.buildForIOS "weston-compositor" { };
           weston-simple-shm-ios = tc.buildForIOS "weston-simple-shm" { };
+          weston-simple-egl-macos = tc.buildForMacOS "weston-simple-egl" { };
         } else { }));
 
       formatter = forAll (system: (pkgsFor system).nixfmt-rfc-style);
