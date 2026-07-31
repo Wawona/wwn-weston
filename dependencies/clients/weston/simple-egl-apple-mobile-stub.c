@@ -1,12 +1,10 @@
 /*
- * Apple mobile (iOS / iPadOS / visionOS) does not provide a Wayland-EGL winsys.
- * Upstream weston-simple-egl uses wl_egl_window + EGL_PLATFORM_WAYLAND_KHR,
- * which cannot initialize against Wawona's iland GBM/ANGLE stack and aborts
- * the host process (assert / wl_egl_window_destroy BAD_ACCESS).
+ * Fallback only: compiled when clients/simple-egl.c fails against the iland
+ * Wayland-EGL stack in ios.nix. Prefer the real upstream client — the winsys
+ * (wl_egl_window + EGL_PLATFORM_WAYLAND) ships in libiland_wayland_egl.a.
  *
- * Nested GL validation on these targets is kmscube via WWNIlandPresenter.
- * Keep the simple_egl_main symbol for link compatibility; return nonzero so
- * the host can surface launch-failed without SIGABRT.
+ * Keep simple_egl_main for link compatibility; return nonzero so Machines can
+ * surface launch-failed without aborting the host.
  */
 #include <stdio.h>
 
@@ -14,7 +12,7 @@ int simple_egl_main(int argc, char **argv) {
   (void)argc;
   (void)argv;
   fprintf(stderr,
-          "weston-simple-egl: Wayland-EGL unsupported on Apple mobile "
-          "(use kmscube for nested GL)\n");
+          "weston-simple-egl: real client failed to build; stub linked "
+          "(rebuild weston with enableGlClients + iland Wayland-EGL)\n");
   return 127;
 }

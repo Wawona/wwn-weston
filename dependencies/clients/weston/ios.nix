@@ -605,16 +605,46 @@ PY
       compile "clients/$c.c" -Dmain="''${sym}_main"
     done
     if [ "$GL_CLIENTS_OK" = "1" ]; then
-      # Do NOT compile upstream clients/simple-egl.c on Apple mobile: it is a
-      # Wayland-EGL client (wl_egl_window + EGL_PLATFORM_WAYLAND_KHR) and aborts
-      # the Wawona host under iland GBM/ANGLE. Ship a stub; use kmscube for GL.
-      echo "CC simple-egl-apple-mobile-stub.c (Wayland-EGL unsupported)"
-      egl_obj="clients_simple-egl_stub_c.o"
-      stub_src="${./simple-egl-apple-mobile-stub.c}"
-      if "$CLANG" -c "$stub_src" $CFLAGS -o "$egl_obj"; then
+      # Real upstream simple-egl against iland Wayland-EGL (wl_egl_window +
+      # EGL_PLATFORM_WAYLAND). Same path as Android / macOS weston-simple-egl.
+      # In-process Apple mobile still needs the host roundtrip/dispatch macros
+      # or wl_display_roundtrip deadlocks against the in-process compositor.
+      echo "CC clients/simple-egl.c (iland Wayland-EGL)"
+      egl_src="clients/simple-egl-mobile.c"
+      cp clients/simple-egl.c "$egl_src"
+      chmod u+w "$egl_src"
+      python3 <<'PY'
+from pathlib import Path
+path = Path("clients/simple-egl-mobile.c")
+text = path.read_text()
+mobile_block = """
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH
+#include "wwn-mobile-clients.h"
+#define wl_display_roundtrip(d) wwn_mobile_display_roundtrip(d)
+#define wl_display_dispatch(d)  wwn_mobile_display_dispatch(d)
+#endif
+#endif
+"""
+anchor = "#include <wayland-client.h>"
+if anchor in text and "wwn-mobile-clients.h" not in text:
+    text = text.replace(anchor, anchor + mobile_block, 1)
+path.write_text(text)
+PY
+      egl_obj="clients_simple_egl_mobile_c.o"
+      if "$CLANG" -c "$egl_src" $CFLAGS -Dmain=simple_egl_main -DENABLE_EGL=1 \
+            ${glIncludeFlags} -I${iland}/include/GLES3 -o "$egl_obj"; then
         objs="$objs $egl_obj"
       else
-        echo "WARNING: weston-simple-egl stub failed to compile" >&2
+        echo "WARNING: weston-simple-egl compile failed — falling back to stub" >&2
+        egl_obj="clients_simple-egl_stub_c.o"
+        stub_src="${./simple-egl-apple-mobile-stub.c}"
+        if "$CLANG" -c "$stub_src" $CFLAGS -o "$egl_obj"; then
+          objs="$objs $egl_obj"
+        else
+          echo "WARNING: weston-simple-egl stub also failed" >&2
+        fi
       fi
     fi
 
