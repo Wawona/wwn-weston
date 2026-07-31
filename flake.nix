@@ -8,7 +8,8 @@
     wwn-toolchain.url = "github:Wawona/wwn-toolchain";
     wwn-toolchain.inputs.nixpkgs.follows = "nixpkgs";
     wwn-toolchain.inputs.rust-overlay.follows = "rust-overlay";
-    wwn-iland.url = "github:Wawona/wwn-iland";
+    # Track development (not default main) — same as Wawona's flake inputs.
+    wwn-iland.url = "github:Wawona/wwn-iland/development";
     wwn-iland.inputs.nixpkgs.follows = "nixpkgs";
     wwn-iland.inputs.wwn-toolchain.follows = "wwn-toolchain";
     wwn-kmscube.url = "github:Wawona/wwn-kmscube";
