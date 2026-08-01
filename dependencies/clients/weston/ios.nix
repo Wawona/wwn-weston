@@ -634,7 +634,7 @@ path.write_text(text)
 PY
       egl_obj="clients_simple_egl_mobile_c.o"
       if "$CLANG" -c "$egl_src" $CFLAGS -Dmain=simple_egl_main -DENABLE_EGL=1 \
-            ${glIncludeFlags} -I${iland}/include/GLES3 -o "$egl_obj"; then
+            ${glIncludeFlags} ${if enableGlClients then "-I${iland}/include/GLES3" else ""} -o "$egl_obj"; then
         objs="$objs $egl_obj"
       else
         echo "WARNING: weston-simple-egl compile failed — falling back to stub" >&2
