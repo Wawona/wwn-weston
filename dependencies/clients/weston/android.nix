@@ -143,6 +143,9 @@ pkgs.stdenv.mkDerivation rec {
     gen_proto ivi-application                "protocol/ivi-application.xml"
     gen_proto input-method-unstable-v1       "$WP/unstable/input-method/input-method-unstable-v1.xml"
     gen_proto weston-desktop-shell           "protocol/weston-desktop-shell.xml"
+    # simple-egl (enableGlClients) needs these staging protocols.
+    gen_proto fractional-scale-v1            "$WP/staging/fractional-scale/fractional-scale-v1.xml"
+    gen_proto tearing-control-v1             "$WP/staging/tearing-control/tearing-control-v1.xml"
 
     cat > config.h <<'EOF'
 #ifndef WESTON_CONFIG_H
@@ -197,6 +200,19 @@ EOF
       "$CC" -c "$src" -include "$POLYFILLS" $CFLAGS "$@" -o "$obj"
       objs+=("$obj")
     }
+    # Like iOS: only append the object when the compile succeeds (simple-egl
+    # is optional and must not poison the archive on failure).
+    try_compile() {
+      local src="$1"; shift
+      local obj="$(echo "$src" | tr '/.' '__').o"
+      echo "CC $src"
+      if "$CC" -c "$src" -include "$POLYFILLS" $CFLAGS "$@" -o "$obj"; then
+        objs+=("$obj")
+        return 0
+      fi
+      rm -f "$obj"
+      return 1
+    }
 
     # frame_create loads PNGs from WESTON_DATA_DIR; tolerate missing assets on
     # Android so clients degrade to 1×1 placeholders instead of SIGSEGV.
@@ -248,7 +264,7 @@ EOF
     if [ "${if enableGlClients then "1" else "0"}" = "1" ] && [ -n "${if enableGlClients then "${glClients}" else ""}" ]; then
       sym=simple_egl
       echo "CC clients/simple-egl.c (iland GL stack)"
-      compile "clients/simple-egl.c" -Dmain="''${sym}_main" ${glIncludeFlags} || {
+      try_compile "clients/simple-egl.c" -Dmain="''${sym}_main" -DENABLE_EGL=1 ${glIncludeFlags} || {
         echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
       }
     fi
