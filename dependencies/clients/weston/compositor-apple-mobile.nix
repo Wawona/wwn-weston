@@ -234,6 +234,11 @@ stdenv.mkDerivation rec {
   postPatch = ''
     cp ${./mobile-weston-client-launch.c} compositor/mobile-weston-client-launch.c
     cp ${./wwn-mobile-clients.h} include/wwn-mobile-clients.h
+    # Route the compositor's weston_log() to the app log before wet_main runs
+    # (constructor installs the handler ahead of backend dlopen), so nested
+    # weston's early startup ("Loading module …", GL init, backend selection)
+    # is diagnosable in the iOS app log the CI harness scans.
+    cp ${./wwn-weston-log.c} compositor/wwn-weston-log.c
 
     # Skip tests and client demos (compositor-only static archive)
     sed -i "/subdir('tests')/d" meson.build
@@ -665,14 +670,24 @@ if "wwn_mobile_register_compositor_display(NULL)" not in main:
 Path("compositor/main.c").write_text(main)
 PY
 
+    # -fvisibility=hidden is on for the weston static archive. Entry points the
+    # host resolves via weak_import (WWNWaypipeRunner) must be default-visible
+    # or they become non-external in the final iOS binary and resolve to NULL
+    # at runtime — Start looks like a no-op ("weston_compositor_main not linked").
     cat > compositor/wwn-weston-compositor-main.c <<'EOF'
 #include "config.h"
 #include <signal.h>
 #include "weston.h"
 
-volatile sig_atomic_t wwn_weston_compositor_shutdown_requested = 0;
+#if defined(__GNUC__) || defined(__clang__)
+#define WWN_EXPORT __attribute__((visibility("default")))
+#else
+#define WWN_EXPORT
+#endif
 
-int weston_compositor_main(int argc, char **argv)
+WWN_EXPORT volatile sig_atomic_t wwn_weston_compositor_shutdown_requested = 0;
+
+WWN_EXPORT int weston_compositor_main(int argc, char **argv)
 {
 	wwn_weston_compositor_shutdown_requested = 0;
 	return wet_main(argc, argv, NULL);
@@ -694,6 +709,12 @@ if needle2 not in text:
     raise SystemExit("wwn-weston-compositor-main.c entry not found")
 if "mobile-weston-client-launch.c" not in text:
     text = text.replace(needle2, insert2, 1)
+needle3 = "\t'mobile-weston-client-launch.c',"
+insert3 = needle3 + "\n\t'wwn-weston-log.c',"
+if needle3 not in text:
+    raise SystemExit("mobile-weston-client-launch.c entry not found")
+if "wwn-weston-log.c" not in text:
+    text = text.replace(needle3, insert3, 1)
 path.write_text(text)
 PY
 
@@ -1269,6 +1290,14 @@ EOF
     done
 
     find "$MERGE_DIR" -name '*.o' -print0 | xargs -0 ar rcs $out/lib/libweston-compositor-13.a
+
+    # Host launch uses weak_import of weston_compositor_main — must stay global.
+    if ! nm -gU $out/lib/libweston-compositor-13.a 2>/dev/null \
+         | grep -E '[[:space:]]T[[:space:]]+_weston_compositor_main$' >/dev/null; then
+      echo "ERROR: _weston_compositor_main is not a global text symbol in libweston-compositor-13.a" >&2
+      nm -m $out/lib/libweston-compositor-13.a 2>/dev/null | grep weston_compositor_main >&2 || true
+      exit 1
+    fi
 
     cp include/wwn-static-modules.h $out/include/ 2>/dev/null || true
     runHook postInstall
