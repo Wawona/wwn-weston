@@ -298,12 +298,42 @@ wwn_wet_client_launch_inprocess(struct weston_compositor *compositor,
 	return proc;
 }
 
+/*
+ * Panel launchers must mirror upstream fork/exec semantics: connect to the
+ * nested compositor via WAYLAND_DISPLAY (named socket), not via wl_client_create
+ * on the compositor display from the desktop-shell thread. Creating a
+ * wl_client off the compositor thread races libwayland-server and takes down
+ * nested Weston when the terminal icon is tapped.
+ *
+ * WAWONA_NESTED_WAYLAND_DISPLAY is set by the host when starting nested
+ * weston (see WWNWaypipeRunner). Fall back to "wawona-nested" / "nested".
+ */
+static const char *
+wwn_panel_nested_wayland_display(void)
+{
+	const char *nested = getenv("WAWONA_NESTED_WAYLAND_DISPLAY");
+
+	if (nested && nested[0])
+		return nested;
+#if defined(__APPLE__) && TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+	return "nested";
+#else
+	return "wawona-nested";
+#endif
+}
+
 void
 wwn_launch_panel_client(char *const *argp, char *const *envp)
 {
 	struct wwn_client_launch_ctx *ctx;
 	wwn_client_main_fn main_fn;
 	pthread_t thread;
+	const char *nested_display;
+	char **new_env;
+	char display_entry[128];
+	size_t src_n = 0;
+	size_t dst_n = 0;
+	bool replaced_display = false;
 
 	if (!argp || !argp[0]) {
 		weston_log("wwn panel client: missing argv\n");
@@ -324,11 +354,54 @@ wwn_launch_panel_client(char *const *argp, char *const *envp)
 		return;
 	}
 
-	ctx->wayland_socket_fd = wwn_panel_client_alloc_wayland_socket(argp[0]);
-	if (ctx->wayland_socket_fd < 0) {
+	/* Force nested socket; drop inherited host WAYLAND_DISPLAY /
+	 * WAYLAND_SOCKET from the nested-weston process environment. */
+	nested_display = wwn_panel_nested_wayland_display();
+	snprintf(display_entry, sizeof display_entry, "WAYLAND_DISPLAY=%s",
+		 nested_display);
+
+	if (ctx->envp) {
+		while (ctx->envp[src_n])
+			src_n++;
+	}
+	new_env = calloc(src_n + 2, sizeof(*new_env));
+	if (!new_env) {
 		wwn_client_launch_ctx_destroy(ctx);
 		return;
 	}
+	for (size_t i = 0; i < src_n; i++) {
+		if (strncmp(ctx->envp[i], "WAYLAND_SOCKET=", 15) == 0)
+			continue;
+		if (strncmp(ctx->envp[i], "WAYLAND_DISPLAY=", 15) == 0) {
+			new_env[dst_n] = wwn_strdup(display_entry);
+			replaced_display = true;
+		} else {
+			new_env[dst_n] = wwn_strdup(ctx->envp[i]);
+		}
+		if (!new_env[dst_n]) {
+			wwn_strv_free(new_env);
+			wwn_client_launch_ctx_destroy(ctx);
+			return;
+		}
+		dst_n++;
+	}
+	if (!replaced_display) {
+		new_env[dst_n] = wwn_strdup(display_entry);
+		if (!new_env[dst_n]) {
+			wwn_strv_free(new_env);
+			wwn_client_launch_ctx_destroy(ctx);
+			return;
+		}
+		dst_n++;
+	}
+	new_env[dst_n] = NULL;
+	wwn_strv_free(ctx->envp);
+	ctx->envp = new_env;
+	ctx->wayland_socket_fd = -1;
+
+	weston_log("wwn panel client: launching '%s' via WAYLAND_DISPLAY=%s "
+		   "(named socket, in-process)\n",
+		   argp[0], nested_display);
 
 	if (pthread_create(&thread, NULL, wwn_client_thread_entry, ctx) != 0) {
 		weston_log("wwn panel client: pthread_create failed for '%s': %s\n",

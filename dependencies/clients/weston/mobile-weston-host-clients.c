@@ -337,8 +337,7 @@ wwn_apply_wayland_socket_env(struct wwn_client_launch_ctx *ctx)
 	char entry[32];
 
 	if (ctx->wayland_socket_fd < 0) {
-		weston_log("wwn mobile client: '%s' missing WAYLAND_SOCKET fd\n",
-			   ctx->argp && ctx->argp[0] ? ctx->argp[0] : "(null)");
+		/* Panel launchers use WAYLAND_DISPLAY (named socket). */
 		return;
 	}
 
@@ -503,6 +502,11 @@ wwn_client_run(struct wwn_client_launch_ctx *ctx, bool own_ctx)
 	if (ctx->wayland_socket_fd >= 0) {
 		wwn_mobile_set_wayland_socket_fd(ctx->wayland_socket_fd);
 		ctx->wayland_socket_fd = -1;
+	} else {
+		/* Named-socket clients (panel launchers): do not inherit a
+		 * stale WAYLAND_SOCKET fd from desktop-shell / a prior client. */
+		wwn_mobile_clear_wayland_socket_fd();
+		unsetenv("WAYLAND_SOCKET");
 	}
 #endif
 
