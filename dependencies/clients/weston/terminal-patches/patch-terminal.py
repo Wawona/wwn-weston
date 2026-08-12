@@ -478,7 +478,7 @@ terminal_write(struct terminal *terminal, const char *data, size_t length)
 {
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 \tif (wwn_ios_terminal_inject(data, length) < 0)
-\t\tabort();
+\t\tWWN_TERM_LOG("weston-terminal: inject failed (%s)\\n", strerror(errno));
 #else
 \tif (write(terminal->master, data, length) < 0)
 \t\tabort();
@@ -1816,17 +1816,52 @@ state_changed_handler"""
     return src.replace(old_plain, new_plain, 1)
 
 
+def patch_ios_no_exit_on_terminal_run_fail(src: str) -> str:
+    """Apple mobile: never exit() the host process when terminal_run fails."""
+    marker = "terminal_run failed; returning without exit()"
+    if marker in src:
+        return src
+    old = """\tif (terminal_run(terminal, option_shell))
+\t\texit(EXIT_FAILURE);"""
+    new = """\tif (terminal_run(terminal, option_shell)) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t\tWWN_TERM_LOG("weston-terminal: terminal_run failed; returning without exit()\\n");
+\t\tdisplay_destroy(d);
+\t\treturn EXIT_FAILURE;
+#else
+\t\texit(EXIT_FAILURE);
+#endif
+\t}"""
+    if old not in src:
+        raise SystemExit("terminal_run exit() anchor missing")
+    return src.replace(old, new, 1)
+
+
 def patch_ios_wait_initial_configure(src: str) -> str:
     """Pump compositor + dispatch until the first configure reaches resize_handler."""
     marker = "weston-terminal: entering display_run"
     if marker in src:
         return src
-    old = """\tif (terminal_run(terminal, option_shell))
+    old = """\tif (terminal_run(terminal, option_shell)) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t\tWWN_TERM_LOG("weston-terminal: terminal_run failed; returning without exit()\\n");
+\t\tdisplay_destroy(d);
+\t\treturn EXIT_FAILURE;
+#else
 \t\texit(EXIT_FAILURE);
+#endif
+\t}
 
 \tdisplay_run(d);"""
-    new = """\tif (terminal_run(terminal, option_shell))
+    new = """\tif (terminal_run(terminal, option_shell)) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t\tWWN_TERM_LOG("weston-terminal: terminal_run failed; returning without exit()\\n");
+\t\tdisplay_destroy(d);
+\t\treturn EXIT_FAILURE;
+#else
 \t\texit(EXIT_FAILURE);
+#endif
+\t}
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 \t{
@@ -1849,6 +1884,7 @@ def patch_ios_wait_initial_configure(src: str) -> str:
 
 \tdisplay_run(d);"""
     if old not in src:
+        # Fresh upstream still uses exit(); apply no-exit first then retry.
         raise SystemExit("terminal main wait-configure anchor missing")
     return src.replace(old, new, 1)
 
@@ -1896,6 +1932,7 @@ def main() -> None:
     src = patch_ios_sigpipe(src)
     src = patch_ios_skip_terminal_create_resize(src)
     src = patch_ios_terminal_create_fail(src)
+    src = patch_ios_no_exit_on_terminal_run_fail(src)
     src = patch_ios_wait_initial_configure(src)
     src = patch_ios_fontconfig_init(src)
     src = patch_ios_font_helper_fn(src)

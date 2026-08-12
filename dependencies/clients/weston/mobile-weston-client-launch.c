@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -364,7 +365,8 @@ wwn_launch_panel_client(char *const *argp, char *const *envp)
 		while (ctx->envp[src_n])
 			src_n++;
 	}
-	new_env = calloc(src_n + 2, sizeof(*new_env));
+	/* Room for WAYLAND_DISPLAY + WAWONA_ZSH_IN_PROCESS + WAWONA_SHELL. */
+	new_env = calloc(src_n + 4, sizeof(*new_env));
 	if (!new_env) {
 		wwn_client_launch_ctx_destroy(ctx);
 		return;
@@ -394,14 +396,87 @@ wwn_launch_panel_client(char *const *argp, char *const *envp)
 		}
 		dst_n++;
 	}
+	{
+		bool have_zsh = false;
+		bool have_shell = false;
+		const char *shell = getenv("WAWONA_SHELL");
+
+		for (size_t i = 0; i < dst_n; i++) {
+			if (strncmp(new_env[i], "WAWONA_ZSH_IN_PROCESS=", 21) == 0)
+				have_zsh = true;
+			if (strncmp(new_env[i], "WAWONA_SHELL=", 13) == 0)
+				have_shell = true;
+		}
+		if (!have_zsh) {
+			new_env[dst_n] = wwn_strdup("WAWONA_ZSH_IN_PROCESS=1");
+			if (!new_env[dst_n]) {
+				wwn_strv_free(new_env);
+				wwn_client_launch_ctx_destroy(ctx);
+				return;
+			}
+			dst_n++;
+		}
+		if (!have_shell) {
+			char shell_entry[512];
+
+			if (!shell || !shell[0])
+				shell = "/usr/bin/zsh";
+			snprintf(shell_entry, sizeof shell_entry,
+				 "WAWONA_SHELL=%s", shell);
+			new_env[dst_n] = wwn_strdup(shell_entry);
+			if (!new_env[dst_n]) {
+				wwn_strv_free(new_env);
+				wwn_client_launch_ctx_destroy(ctx);
+				return;
+			}
+			dst_n++;
+		}
+	}
 	new_env[dst_n] = NULL;
 	wwn_strv_free(ctx->envp);
 	ctx->envp = new_env;
 	ctx->wayland_socket_fd = -1;
 
+	/* Match Machines Start: weston-terminal --shell <WAWONA_SHELL>. */
+	{
+	const char *base = strrchr(argp[0], '/');
+
+	base = base ? base + 1 : argp[0];
+	if (strcmp(base, "weston-terminal") == 0) {
+		const char *shell = getenv("WAWONA_SHELL");
+		char **term_argv;
+		bool has_shell_flag = false;
+
+		if (!shell || !shell[0])
+			shell = "/usr/bin/zsh";
+		for (int i = 0; argp[i]; i++) {
+			if (strcmp(argp[i], "--shell") == 0) {
+				has_shell_flag = true;
+				break;
+			}
+		}
+		if (!has_shell_flag) {
+			term_argv = calloc(4, sizeof(*term_argv));
+			if (term_argv) {
+				term_argv[0] = wwn_strdup("weston-terminal");
+				term_argv[1] = wwn_strdup("--shell");
+				term_argv[2] = wwn_strdup(shell);
+				term_argv[3] = NULL;
+				if (term_argv[0] && term_argv[1] && term_argv[2]) {
+					wwn_strv_free(ctx->argp);
+					ctx->argp = term_argv;
+				} else {
+					wwn_strv_free(term_argv);
+				}
+			}
+		}
+	}
+	}
+
 	weston_log("wwn panel client: launching '%s' via WAYLAND_DISPLAY=%s "
 		   "(named socket, in-process)\n",
-		   argp[0], nested_display);
+		   ctx->argp && ctx->argp[0] ? ctx->argp[0] : argp[0],
+		   nested_display);
 
 	if (pthread_create(&thread, NULL, wwn_client_thread_entry, ctx) != 0) {
 		weston_log("wwn panel client: pthread_create failed for '%s': %s\n",

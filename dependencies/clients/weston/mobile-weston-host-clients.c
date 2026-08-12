@@ -495,6 +495,25 @@ wwn_client_run(struct wwn_client_launch_ctx *ctx, bool own_ctx)
 		}
 	}
 
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	/*
+	 * Panel launchers inherit desktop-shell's envp snapshot, which can omit
+	 * rootfs/zsh markers that Machines Start sets via applyShellEnvironment.
+	 * Force the in-process PTY path before weston_terminal_main runs so
+	 * wwn_pty_open does not attempt POSIX PTY (and so a failed terminal_run
+	 * cannot leave the client without a shell).
+	 */
+	setenv("WAWONA_ZSH_IN_PROCESS", "1", 1);
+	{
+		const char *shell = getenv("WAWONA_SHELL");
+
+		if (!shell || !shell[0])
+			setenv("WAWONA_SHELL", "/usr/bin/zsh", 1);
+	}
+	wwn_ios_refresh_bundle_env();
+	wwn_propagate_mobile_env();
+#endif
+
 	wwn_apply_wayland_socket_env(ctx);
 	wwn_log_mobile_env(ctx->argp && ctx->argp[0] ? ctx->argp[0] : "(null)");
 
