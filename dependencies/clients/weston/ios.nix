@@ -587,6 +587,50 @@ if "wwn_toytoolkit_live_displays" not in text:
         1,
     )
 
+# Nested weston holds SHM leaves until buffer_release. Under GCD utility QoS
+# releases lag behind weston-terminal's resize/redraw storm; upstream then
+# exit(1)s and tears down the entire Wawona process mid-pixman composite
+# (EXC_BAD_ACCESS / PAC in _pixman_implementation_iter_init). Pump the
+# display for releases, then skip the frame instead of killing the host.
+if "wwn: all SHM leaves busy" not in text:
+    old_busy = """\tif (!leaf) {
+\t\tfprintf(stderr, "%s: all buffers are held by the server.\\n",
+\t\t\t__func__);
+\t\texit(1);
+\t\treturn NULL;
+\t}"""
+    new_busy = """\tif (!leaf) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+\t\tint spin;
+
+\t\tfor (spin = 0; spin < 64 && !leaf; spin++) {
+\t\t\tif (surface->display && surface->display->display)
+\t\t\t\twl_display_dispatch_pending(surface->display->display);
+\t\t\tsched_yield();
+\t\t\tfor (i = 0; i < MAX_LEAVES; i++) {
+\t\t\t\tif (surface->leaf[i].busy)
+\t\t\t\t\tcontinue;
+\t\t\t\tif (!leaf || surface->leaf[i].cairo_surface)
+\t\t\t\t\tleaf = &surface->leaf[i];
+\t\t\t}
+\t\t}
+\t\tif (!leaf) {
+\t\t\tfprintf(stderr,
+\t\t\t\t"%s: wwn: all SHM leaves busy; skip frame (no exit)\\n",
+\t\t\t\t__func__);
+\t\t\treturn NULL;
+\t\t}
+#else
+\t\tfprintf(stderr, "%s: all buffers are held by the server.\\n",
+\t\t\t__func__);
+\t\texit(1);
+\t\treturn NULL;
+#endif
+\t}"""
+    if old_busy not in text:
+        raise SystemExit("window.c shm_surface_prepare busy-exit anchor missing")
+    text = text.replace(old_busy, new_busy, 1)
+
 path.write_text(text)
 PY
     cp ${./terminal-patches/patch-window-csd.py} ./patch-window-csd.py

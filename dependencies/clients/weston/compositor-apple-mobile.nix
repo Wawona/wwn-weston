@@ -370,6 +370,87 @@ if surface_patch not in text:
 path.write_text(text)
 PY
 
+    # Soft-fail nested wayland+pixman when output SHM allocation fails, and
+    # skip paint nodes whose SHM backing vanished mid-repaint (client exit /
+    # pool recycle races under in-process pthread vs GCD).
+    python3 - <<'PY'
+from pathlib import Path
+
+wl = Path("libweston/backend-wayland/wayland.c")
+text = wl.read_text()
+old = """\tsb = wayland_output_get_shm_buffer(output);
+
+\twayland_output_update_shm_border(sb);
+\tb->compositor->renderer->repaint_output(output_base, damage,
+\t\t\t\t\t\tsb->renderbuffer);
+
+\twayland_shm_buffer_attach(sb, damage);"""
+new = """\tsb = wayland_output_get_shm_buffer(output);
+\tif (!sb || !sb->renderbuffer) {
+\t\tweston_log("wayland-backend: no SHM renderbuffer for pixman repaint; skipping frame\\n");
+\t\treturn -1;
+\t}
+
+\twayland_output_update_shm_border(sb);
+\tb->compositor->renderer->repaint_output(output_base, damage,
+\t\t\t\t\t\tsb->renderbuffer);
+
+\twayland_shm_buffer_attach(sb, damage);"""
+if "no SHM renderbuffer for pixman repaint" not in text:
+    if old not in text:
+        raise SystemExit("wayland_output_repaint_pixman SHM anchor missing")
+    text = text.replace(old, new, 1)
+    wl.write_text(text)
+
+pr = Path("libweston/pixman-renderer.c")
+text = pr.read_text()
+old = """\t/* No buffer attached */
+\tif (!ps->image)
+\t\treturn;
+
+\t/* if we still have a reference, but the underlying buffer is no longer
+\t * available signal that we should unref image_t as well. This happens
+\t * when using close animations, with the reference surviving the
+\t * animation while the underlying buffer went away as the client was
+\t * terminated. This is a particular use-case and should probably be
+\t * refactored to provide some analogue with the GL-renderer (as in, to
+\t * still maintain the buffer and let the compositor dispose of it). */
+\tif (ps->buffer_ref.buffer && !ps->buffer_ref.buffer->shm_buffer) {
+\t\tpixman_image_unref(ps->image);
+\t\tps->image = NULL;
+\t\treturn;
+\t}"""
+new = """\t/* No buffer attached */
+\tif (!ps->image)
+\t\treturn;
+
+\t/* if we still have a reference, but the underlying buffer is no longer
+\t * available signal that we should unref image_t as well. This happens
+\t * when using close animations, with the reference surviving the
+\t * animation while the underlying buffer went away as the client was
+\t * terminated. This is a particular use-case and should probably be
+\t * refactored to provide some analogue with the GL-renderer (as in, to
+\t * still maintain the buffer and let the compositor dispose of it). */
+\tif (ps->buffer_ref.buffer && !ps->buffer_ref.buffer->shm_buffer) {
+\t\tpixman_image_unref(ps->image);
+\t\tps->image = NULL;
+\t\treturn;
+\t}
+
+\t/* In-process Apple mobile: client pthread can recycle SHM pools while
+\t * nested weston still paints. Drop stale images that lost their bits. */
+\tif (!pixman_image_get_data(ps->image)) {
+\t\tpixman_image_unref(ps->image);
+\t\tps->image = NULL;
+\t\treturn;
+\t}"""
+if "pixman_image_get_data(ps->image)" not in text:
+    if old not in text:
+        raise SystemExit("pixman draw_paint_node buffer guard anchor missing")
+    text = text.replace(old, new, 1)
+    pr.write_text(text)
+PY
+
     touch include/empty.c
     mkdir -p include
     sed -i "s/'libinput-device.c'/'..\/include\/empty.c'/g" libweston/meson.build
