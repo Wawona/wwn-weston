@@ -984,11 +984,21 @@ EOF
 #endif
 EOF
 
+    # Linux pixel-formats.c uses `__BYTE_ORDER == __LITTLE_ENDIAN`. Darwin's
+    # <machine/endian.h> only defines BYTE_ORDER / LITTLE_ENDIAN (no underscores).
+    # Defining __BYTE_ORDER alone made `#if __BYTE_ORDER == __LITTLE_ENDIAN` become
+    # `1234 == 0` (false) → big-endian PIXMAN_* branches on little-endian Apple,
+    # so nested Weston SHM was B↔A swapped (everything blue-tinted / B=255).
     cat > include/endian.h <<'EOF'
 #ifndef _ENDIAN_H
 #define _ENDIAN_H
 #include <machine/endian.h>
 #define __BYTE_ORDER BYTE_ORDER
+#define __LITTLE_ENDIAN LITTLE_ENDIAN
+#define __BIG_ENDIAN BIG_ENDIAN
+#ifdef PDP_ENDIAN
+#define __PDP_ENDIAN PDP_ENDIAN
+#endif
 #endif
 EOF
 
