@@ -5,14 +5,14 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
-    wwn-toolchain.url = "github:Wawona/wwn-toolchain/development";
+    wwn-toolchain.url = "https://flakehub.com/f/Wawona/wwn-toolchain/*";
     wwn-toolchain.inputs.nixpkgs.follows = "nixpkgs";
     wwn-toolchain.inputs.rust-overlay.follows = "rust-overlay";
-    # Track development (not default main) — same as Wawona's flake inputs.
-    wwn-iland.url = "github:Wawona/wwn-iland/development";
+    # FlakeHub rolling follows the published L1 tip (same as Wawona's inputs).
+    wwn-iland.url = "https://flakehub.com/f/Wawona/wwn-iland/*";
     wwn-iland.inputs.nixpkgs.follows = "nixpkgs";
     wwn-iland.inputs.wwn-toolchain.follows = "wwn-toolchain";
-    wwn-kmscube.url = "github:Wawona/wwn-kmscube/development";
+    wwn-kmscube.url = "https://flakehub.com/f/Wawona/wwn-kmscube/*";
     wwn-kmscube.inputs.nixpkgs.follows = "nixpkgs";
     wwn-kmscube.inputs.wwn-toolchain.follows = "wwn-toolchain";
     wwn-kmscube.inputs.wwn-iland.follows = "wwn-iland";
