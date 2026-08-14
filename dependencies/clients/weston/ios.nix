@@ -368,6 +368,29 @@ if old not in text:
     raise SystemExit("frame.c icon load anchor missing")
 path.write_text(text.replace(old, new, 1))
 PY
+    # CSD titlebar uses Pango "sans-serif Bold 10" — on watch/iOS that family
+    # often fails Fc match and draws tofu boxes while mono cell text (file:
+    # WAWONA_MONO_FONT) still works. Prefer DejaVu Sans by name (bundled).
+    python3 <<'PY'
+from pathlib import Path
+path = Path("shared/cairo-util.c")
+text = path.read_text()
+old = 'desc = pango_font_description_from_string("sans-serif Bold 10");'
+new = 'desc = pango_font_description_from_string("DejaVu Sans Bold 10");'
+if old not in text:
+    raise SystemExit("cairo-util.c pango title font anchor missing")
+text = text.replace(old, new, 1)
+old2 = '''\t\tcairo_select_font_face(cr, "sans-serif",
+\t\t\t\t       CAIRO_FONT_SLANT_NORMAL,
+\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);'''
+new2 = '''\t\tcairo_select_font_face(cr, "DejaVu Sans",
+\t\t\t\t       CAIRO_FONT_SLANT_NORMAL,
+\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);'''
+if old2 in text:
+    text = text.replace(old2, new2, 1)
+path.write_text(text)
+print("Patched cairo-util.c title fonts → DejaVu Sans")
+PY
     for s in shared/config-parser.c shared/option-parser.c shared/signal.c \
              shared/file-util.c shared/os-compatibility.c shared/process-util.c \
              shared/hash.c shared/image-loader.c shared/cairo-util.c shared/matrix.c \
