@@ -1,5 +1,7 @@
 # wwn-weston
 
+[![CI](https://github.com/Wawona/wwn-weston/actions/workflows/ci.yml/badge.svg)](https://github.com/Wawona/wwn-weston/actions/workflows/ci.yml)
+
 All [Weston](https://gitlab.freedesktop.org/wayland/weston) ports for Wawona live in this repo — compositors, toytoolkit demo clients, terminal, shell clients, and `weston-simple-shm`. Upstream Weston 13.0.0 is fetched at build time and patched in-place (patch-overlay model); nothing vendors the full Weston tree.
 
 Targets: **iOS, iPadOS, tvOS, watchOS, visionOS, macOS, Android (Wear OS), and Linux** (reference / host bundles). Apple mobile and Android ship Weston as **in-process static archives** (`*_main` entry points). macOS and Linux use conventional Meson / binary builds where appropriate.
