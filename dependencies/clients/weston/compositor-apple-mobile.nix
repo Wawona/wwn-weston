@@ -1490,6 +1490,9 @@ EOF
     done
     ''}
 
+    # Meson embeds different relative-path depths in object names
+    # (…_.._protocol_FOO vs …_.._.._protocol_FOO). Same wl_interface
+    # symbols then collide under -force_load. Keep one object per protocol.
     dedupe_protocol_suffix() {
       local suffix="$1"
       mapfile -t matches < <(find "$MERGE_DIR" -name "*$suffix*.o" | sort)
@@ -1498,8 +1501,10 @@ EOF
       fi
     }
     for suffix in \
+      xdg-shell-protocol \
       xdg-shell-unstable-v6-protocol \
       xdg-output-unstable-v1-protocol \
+      linux-dmabuf-unstable-v1-protocol \
       presentation; do
       dedupe_protocol_suffix "$suffix"
     done
