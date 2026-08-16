@@ -1,7 +1,11 @@
 # Link flags for the cross-compiled weston toytoolkit (cairo/pango stack) consumed
 # by libweston-13.a on Apple mobile and Android targets. Pass the platform's
 # nativeDeps attrset from flake.nix.
-{ lib, deps, forceLoadWeston ? false, linkMode ? "force_load", linkWestonSimpleShm ? true }:
+{ lib, deps, forceLoadWeston ? false, linkMode ? "force_load", linkWestonSimpleShm ? true
+  # macOS in-process compositor is self-contained (helpers kept in
+  # libweston-compositor-13.a). Linking -lweston-13 (shared demo build) then
+  # duplicates libweston core symbols. Set false on that target.
+, linkWestonLib ? true }:
 
 let
   strip = d: if d == null then "" else toString d;
@@ -49,16 +53,16 @@ let
         "libweston-keyboard.a"
       ];
       existingArchives =
-        if forceLoadWeston && deps ? weston && deps.weston != null then
+        if forceLoadWeston && linkWestonLib && deps ? weston && deps.weston != null then
           lib.filter (name: builtins.pathExists "${westonLibDir}/${name}") archiveNames
         else
           [ ];
     in
-    if existingArchives == [ ] then
-      # Dylib fallback (macOS): only link libs the weston output actually
-      # ships. Newer macOS weston merges libweston-desktop into libweston-13
-      # and provides weston-terminal as a standalone binary, so the desktop/
-      # terminal dylibs may not exist.
+    if !linkWestonLib then
+      [ ]
+    else if existingArchives == [ ] then
+      # Dylib fallback when no static toytoolkit archives exist. Do not use on
+      # macOS app link when compositor already embeds libweston (see linkWestonLib).
       lib.filter (s: s != "") [
         "-lweston-13"
         (if builtins.pathExists "${westonLibDir}/libweston-desktop-13.dylib" then "-lweston-desktop-13" else "")

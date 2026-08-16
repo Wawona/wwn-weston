@@ -774,6 +774,119 @@ WWN_EXPORT int weston_compositor_main(int argc, char **argv)
 	return wet_main(argc, argv, NULL);
 }
 EOF
+
+    # Weston 13 GL renderer exports gl_renderer_interface (not weston_module_init),
+    # but wwn-static-modules.h still takes the address of wwn_gl_renderer_module_init.
+    # libinput-seat / launcher-libseat are replaced with empty.c on Apple builds, yet
+    # the DRM backend still references udev_input_* and launcher_libseat_iface.
+    cat > compositor/wwn-drm-link-stubs.c <<'EOF'
+#include "config.h"
+#include <stddef.h>
+#include <stdbool.h>
+#include "../libweston/libinput-seat.h"
+#include "../libweston/launcher-impl.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+#define WWN_EXPORT __attribute__((visibility("default")))
+#else
+#define WWN_EXPORT
+#endif
+
+WWN_EXPORT int
+wwn_gl_renderer_module_init(struct weston_compositor *ec)
+{
+	(void)ec;
+	/* Real GL bring-up uses gl_renderer_interface from gl-renderer.c. */
+	return -1;
+}
+
+WWN_EXPORT int
+udev_input_enable(struct udev_input *input)
+{
+	(void)input;
+	return -1;
+}
+
+WWN_EXPORT void
+udev_input_disable(struct udev_input *input)
+{
+	(void)input;
+}
+
+WWN_EXPORT int
+udev_input_init(struct udev_input *input, struct weston_compositor *c,
+		struct udev *udev, const char *seat_id,
+		udev_configure_device_t configure_device)
+{
+	(void)input;
+	(void)c;
+	(void)udev;
+	(void)seat_id;
+	(void)configure_device;
+	return -1;
+}
+
+WWN_EXPORT void
+udev_input_destroy(struct udev_input *input)
+{
+	(void)input;
+}
+
+WWN_EXPORT struct udev_seat *
+udev_seat_get_named(struct udev_input *u, const char *seat_name)
+{
+	(void)u;
+	(void)seat_name;
+	return NULL;
+}
+
+static int
+wwn_libseat_connect(struct weston_launcher **launcher_out,
+		    struct weston_compositor *compositor, const char *seat_id,
+		    bool sync_drm)
+{
+	(void)launcher_out;
+	(void)compositor;
+	(void)seat_id;
+	(void)sync_drm;
+	return -1;
+}
+
+static void wwn_libseat_destroy(struct weston_launcher *launcher) { (void)launcher; }
+static int wwn_libseat_open(struct weston_launcher *launcher, const char *path, int flags)
+{
+	(void)launcher;
+	(void)path;
+	(void)flags;
+	return -1;
+}
+static void wwn_libseat_close(struct weston_launcher *launcher, int fd)
+{
+	(void)launcher;
+	(void)fd;
+}
+static int wwn_libseat_activate_vt(struct weston_launcher *launcher, int vt)
+{
+	(void)launcher;
+	(void)vt;
+	return -1;
+}
+static int wwn_libseat_get_vt(struct weston_launcher *launcher)
+{
+	(void)launcher;
+	return -1;
+}
+
+WWN_EXPORT const struct launcher_interface launcher_libseat_iface = {
+	.name = "libseat-stub",
+	.connect = wwn_libseat_connect,
+	.destroy = wwn_libseat_destroy,
+	.open = wwn_libseat_open,
+	.close = wwn_libseat_close,
+	.activate_vt = wwn_libseat_activate_vt,
+	.get_vt = wwn_libseat_get_vt,
+};
+EOF
     python3 - <<'PY'
 from pathlib import Path
 path = Path("compositor/meson.build")
@@ -796,6 +909,12 @@ if needle3 not in text:
     raise SystemExit("mobile-weston-client-launch.c entry not found")
 if "wwn-weston-log.c" not in text:
     text = text.replace(needle3, insert3, 1)
+needle4 = "\t'wwn-weston-log.c',"
+insert4 = needle4 + "\n\t'wwn-drm-link-stubs.c',"
+if needle4 not in text:
+    raise SystemExit("wwn-weston-log.c entry not found")
+if "wwn-drm-link-stubs.c" not in text:
+    text = text.replace(needle4, insert4, 1)
 path.write_text(text)
 PY
 
@@ -1327,9 +1446,17 @@ EOF
       (cd "$MERGE_DIR" && ar x "$ROOT/$a") || exit 1
     done
 
-    # weston-ios libweston-13.a already ships shared helpers + generated protocols +
-    # toytoolkit clients. Drop those objects from the compositor fat archive so Xcode
-    # can force_load both libraries without duplicate symbols.
+    # Apple mobile pairs this archive with weston-ios libweston-13.a (toytoolkit +
+    # shared helpers + client protocol glue). Drop those objects here so Xcode can
+    # force_load both without duplicate symbols.
+    #
+    # macOS has no libweston-13.a — buildForMacOS "weston" is a shared/dylib recipe
+    # for Resources/bin demos. Keeping helpers/protocols in this fat archive is what
+    # makes -force_load libweston-compositor-13.a link (frame_create, custom_env_*,
+    # hash_table_*, wl_interface protocol symbols, …).
+    ${if macos then ''
+    echo "macos: keeping shared helpers + protocol glue in libweston-compositor-13.a"
+    '' else ''
     for pattern in \
       'os-compatibility.c.o' \
       'process-util.c.o' \
@@ -1348,10 +1475,6 @@ EOF
       find "$MERGE_DIR" -name "$pattern" -delete
     done
 
-    # libweston-13.a (weston-ios) embeds client-side private-code for demo clients.
-    # Drop matching protocol glue objects from the compositor fat archive so force_load
-    # of both libraries does not duplicate wl_interface symbols. Server implementation
-    # TUs (e.g. desktop_xdg-shell.c.o) are kept.
     for pattern in \
       '*weston-desktop-shell-protocol*.o' \
       '*input-method-unstable-v1-protocol*.o' \
@@ -1365,6 +1488,7 @@ EOF
       '*text-cursor-position-protocol*.o'; do
       find "$MERGE_DIR" -name "$pattern" -delete
     done
+    ''}
 
     dedupe_protocol_suffix() {
       local suffix="$1"
