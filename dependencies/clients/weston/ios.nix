@@ -380,12 +380,13 @@ new = 'desc = pango_font_description_from_string("DejaVu Sans Bold 10");'
 if old not in text:
     raise SystemExit("cairo-util.c pango title font anchor missing")
 text = text.replace(old, new, 1)
-old2 = '''\t\tcairo_select_font_face(cr, "sans-serif",
+# Triple-single Python quotes conflict with Nix indented strings; use """.
+old2 = """\t\tcairo_select_font_face(cr, "sans-serif",
 \t\t\t\t       CAIRO_FONT_SLANT_NORMAL,
-\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);'''
-new2 = '''\t\tcairo_select_font_face(cr, "DejaVu Sans",
+\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);"""
+new2 = """\t\tcairo_select_font_face(cr, "DejaVu Sans",
 \t\t\t\t       CAIRO_FONT_SLANT_NORMAL,
-\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);'''
+\t\t\t\t       CAIRO_FONT_WEIGHT_BOLD);"""
 if old2 in text:
     text = text.replace(old2, new2, 1)
 path.write_text(text)
