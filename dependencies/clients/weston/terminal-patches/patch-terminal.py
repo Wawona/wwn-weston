@@ -206,11 +206,16 @@ terminal_ios_load_font(cairo_t *cr, int bold)
 \t\treturn NULL;
 \tFcConfigSubstitute(NULL, pattern, FcMatchPattern);
 \tFcDefaultSubstitute(pattern);
-\tmatch = FcFontMatch(NULL, pattern, NULL);
-\tFcPatternDestroy(pattern);
-\tif (!match) {
-\t\tWWN_TERM_LOG("weston-terminal: FcFontMatch failed for '%s'\\n", spec);
-\t\treturn NULL;
+\t{
+\t\tFcResult fres = FcResultNoMatch;
+\t\t/* FcFontMatch asserts result != NULL (fcmatch.c). Never pass NULL. */
+\t\tmatch = FcFontMatch(NULL, pattern, &fres);
+\t\tFcPatternDestroy(pattern);
+\t\tif (!match) {
+\t\t\tWWN_TERM_LOG("weston-terminal: FcFontMatch failed for '%s' (fres=%d)\\n",
+\t\t\t\t     spec, (int)fres);
+\t\t\treturn NULL;
+\t\t}
 \t}
 \tface = cairo_ft_font_face_create_for_pattern(match);
 \tFcPatternDestroy(match);
