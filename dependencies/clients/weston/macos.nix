@@ -1,4 +1,4 @@
-{ lib, stdenv, fetchurl, meson, ninja, pkg-config, wayland, wayland-scanner, wayland-protocols, libxkbcommon, cairo, pango, libpng, libjpeg, mesa, pixman, python3, libinput, libevdev, seatd, pam, openssl, epoll-shim, fontconfig, freetype, ... }:
+{ lib, stdenv, fetchurl, meson, ninja, pkg-config, wayland, wayland-scanner, wayland-protocols, libxkbcommon, cairo, pango, libpng, libjpeg, mesa, pixman, python3, libinput, libevdev, seatd, pam, openssl, epoll-shim, ... }:
 
 stdenv.mkDerivation rec {
   pname = "weston";
@@ -49,8 +49,6 @@ stdenv.mkDerivation rec {
     libxkbcommon
     cairo
     pango
-    fontconfig
-    freetype
     libpng
     epoll-shim
     libjpeg
@@ -254,13 +252,6 @@ print("Patched terminal.c: OSC 7 handler + PROMPT_COMMAND")
 PYEOF
     python3 _patch_terminal_title.py
     rm _patch_terminal_title.py
-
-    # Fontconfig + cairo-ft loader so bundled JetBrainsMono NL Nerd Font Mono
-    # (WAWONA_MONO_FONT / fonts.conf) is used. Without this, macOS cairo toy
-    # fonts ignore FONTCONFIG_FILE and Nerd icons render as empty cells.
-    cp ${./terminal-patches/patch-terminal.py} ./patch-terminal-fonts.py
-    python3 ./patch-terminal-fonts.py --fonts-only clients/terminal.c
-    rm ./patch-terminal-fonts.py
     
     # Create inclusive directory for shims
     mkdir -p include/sys include/libudev include/libinput include/linux include/libevdev include/GLES2 include/EGL include/KHR
