@@ -121,7 +121,7 @@ def patch_ios_terminal_font_face(src: str) -> str:
 \tterminal->font_normal = cairo_get_scaled_font (cr);
 \tcairo_scaled_font_reference(terminal->font_normal);
 #endif"""
-    if "terminal_ios_load_font" in src:
+    if "terminal->font_bold = terminal_ios_load_font" in src:
         return src
     if old not in src:
         raise SystemExit("terminal_create font face anchor missing")
@@ -348,21 +348,38 @@ def patch_howmany_and_title(src: str) -> str:
 
 
 def patch_mobile_bootstrap(src: str) -> str:
-    """Define WWN_MOBILE_TERMINAL for Apple-mobile AND Android.
+    """Define WWN_MOBILE_TERMINAL for Apple (incl. macOS) AND Android.
 
     The font/glyph-rendering fixes below (fontconfig+cairo-ft font loader,
     per-cell cairo_show_text, visible-color lifts) were originally gated on
     Apple mobile only, so Android compiled essentially-upstream weston-terminal
-    and rendered notdef/tofu boxes. Android needs the same renderer, but NOT the
-    iOS socketpair fake-PTY machinery (it has a real forkpty + epoll). We split
-    the guards: render/font -> WWN_MOBILE_TERMINAL; PTY/input -> Apple-mobile.
+    and rendered notdef/tofu boxes. macOS had the same gap: cairo's toy font
+    API ignores FONTCONFIG_FILE / WAWONA_MONO_FONT, so bundled Nerd Fonts never
+    loaded. Enable the font loader on every Apple + Android target.
 
-    Android also lacks the Apple wwn_app_log_fd()-based WWN_TERM_LOG (that lives
-    in the Apple-only spawn block), so provide an stderr-backed shim here — the
-    Android app already captures the client's stderr into logcat.
+    PTY/input stays Apple-mobile-only (separate TARGET_OS_IPHONE guards).
+    Android also lacks the Apple wwn_app_log_fd()-based WWN_TERM_LOG, so provide
+    an stderr-backed shim here.
     """
     marker = "WWN_MOBILE_TERMINAL"
     if marker in src:
+        # Older trees only enabled mobile/Android. Widen to macOS when needed.
+        old_gate = (
+            "#if (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || "
+            "TARGET_OS_WATCH)) || defined(__ANDROID__)"
+        )
+        new_gate = "#if defined(__APPLE__) || defined(__ANDROID__)"
+        if old_gate in src:
+            src = src.replace(old_gate, new_gate, 1)
+        # Older Android-only stderr log: also cover macOS desktop.
+        old_log = "#if defined(__ANDROID__)\n#include <stdio.h>\n#ifndef WWN_TERM_LOG"
+        new_log = (
+            "#if defined(__ANDROID__) || (defined(__APPLE__) && !TARGET_OS_IPHONE "
+            "&& !TARGET_OS_TV && !TARGET_OS_WATCH)\n"
+            "#include <stdio.h>\n#ifndef WWN_TERM_LOG"
+        )
+        if old_log in src:
+            src = src.replace(old_log, new_log, 1)
         return src
     anchor = '#include "config.h"'
     bootstrap = """
@@ -371,12 +388,14 @@ def patch_mobile_bootstrap(src: str) -> str:
 #endif
 #include <limits.h>
 #include <stdlib.h>
-#if (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)) || defined(__ANDROID__)
+#if defined(__APPLE__) || defined(__ANDROID__)
 #ifndef WWN_MOBILE_TERMINAL
 #define WWN_MOBILE_TERMINAL 1
 #endif
 #endif
-#if defined(__ANDROID__)
+/* Android + macOS desktop: stderr. Apple mobile gets WWN_TERM_LOG from the
+ * PTY/spawn patch (wwn_app_log_fd). */
+#if defined(__ANDROID__) || (defined(__APPLE__) && !TARGET_OS_IPHONE && !TARGET_OS_TV && !TARGET_OS_WATCH)
 #include <stdio.h>
 #ifndef WWN_TERM_LOG
 #define WWN_TERM_LOG(fmt, ...)  fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -389,6 +408,25 @@ def patch_mobile_bootstrap(src: str) -> str:
     if anchor not in src:
         raise SystemExit("config.h include anchor missing for mobile bootstrap")
     return src.replace(anchor, anchor + bootstrap, 1)
+
+
+def patch_fonts_only(src: str) -> str:
+    """Fontconfig/cairo-ft + Nerd Font defaults without re-running OSC/PTY patches."""
+    src = patch_mobile_bootstrap(src)
+    src = patch_ios_fontconfig_init(src)
+    src = patch_ios_font_helper_fn(src)
+    src = patch_ios_main_fcinit(src)
+    src = patch_ios_font_default(src)
+    src = patch_android_font_size(src)
+    src = patch_ios_terminal_font_face(src)
+    src = patch_ios_font_metrics_log(src)
+    src = patch_ios_redraw_show_text(src)
+    src = patch_ios_redraw_visible_fg(src)
+    src = patch_ios_redraw_background(src)
+    src = patch_ios_initial_redraw(src)
+    src = patch_ios_glyph_fallback(src)
+    return src
+
 
 
 def patch_ios_max_escape(src: str) -> str:
@@ -1934,51 +1972,62 @@ def patch_ios_terminal_create_fail(src: str) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"usage: {sys.argv[0]} <terminal.c>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(f"usage: {sys.argv[0]} [--fonts-only] <terminal.c>", file=sys.stderr)
         sys.exit(2)
-    path = Path(sys.argv[1])
+    args = sys.argv[1:]
+    fonts_only = False
+    if args and args[0] == "--fonts-only":
+        fonts_only = True
+        args = args[1:]
+    if len(args) != 1:
+        print(f"usage: {sys.argv[0]} [--fonts-only] <terminal.c>", file=sys.stderr)
+        sys.exit(2)
+    path = Path(args[0])
     src = path.read_text()
-    src = patch_howmany_and_title(src)
-    src = patch_mobile_bootstrap(src)
-    src = patch_ios_lf_newline(src)
-    src = patch_ios_spawn(src)
-    src = patch_ios_pty_poll_field(src)
-    src = patch_ios_pty_poll(src)
-    src = patch_ios_io_handler(src)
-    src = patch_ios_io_handler_consume(src)
-    src = patch_ios_winsize(src)
-    src = patch_ios_resize_redraw(src)
-    src = patch_terminal_csd_geometry_helper(src)
-    src = patch_ios_resize_pace_order(src)
-    src = patch_ios_honor_host_configure_size(src)
-    src = patch_terminal_csd_geometry_call(src)
-    src = patch_ios_resize_shell_refresh(src)
-    src = patch_ios_skip_terminal_run_resize(src)
-    src = patch_ios_sigpipe(src)
-    src = patch_ios_skip_terminal_create_resize(src)
-    src = patch_ios_terminal_create_fail(src)
-    src = patch_ios_no_exit_on_terminal_run_fail(src)
-    src = patch_ios_wait_initial_configure(src)
-    src = patch_ios_fontconfig_init(src)
-    src = patch_ios_font_helper_fn(src)
-    src = patch_ios_main_fcinit(src)
-    src = patch_ios_font_default(src)
-    src = patch_android_font_size(src)
-    src = patch_ios_terminal_font_face(src)
-    src = patch_ios_font_metrics_log(src)
-    src = patch_ios_redraw_show_text(src)
-    src = patch_ios_redraw_visible_fg(src)
-    src = patch_ios_redraw_background(src)
-    src = patch_ios_initial_redraw(src)
-    src = patch_ios_glyph_fallback(src)
-    src = patch_ios_terminal_master(src)
-    src = patch_ios_terminal_destroy_master(src)
-    src = patch_ios_terminal_write(src)
-    src = patch_ios_max_escape(src)
-    src = patch_osc7_and_prompt(src)
+    if fonts_only:
+        src = patch_fonts_only(src)
+    else:
+        src = patch_howmany_and_title(src)
+        src = patch_mobile_bootstrap(src)
+        src = patch_ios_lf_newline(src)
+        src = patch_ios_spawn(src)
+        src = patch_ios_pty_poll_field(src)
+        src = patch_ios_pty_poll(src)
+        src = patch_ios_io_handler(src)
+        src = patch_ios_io_handler_consume(src)
+        src = patch_ios_winsize(src)
+        src = patch_ios_resize_redraw(src)
+        src = patch_terminal_csd_geometry_helper(src)
+        src = patch_ios_resize_pace_order(src)
+        src = patch_ios_honor_host_configure_size(src)
+        src = patch_terminal_csd_geometry_call(src)
+        src = patch_ios_resize_shell_refresh(src)
+        src = patch_ios_skip_terminal_run_resize(src)
+        src = patch_ios_sigpipe(src)
+        src = patch_ios_skip_terminal_create_resize(src)
+        src = patch_ios_terminal_create_fail(src)
+        src = patch_ios_no_exit_on_terminal_run_fail(src)
+        src = patch_ios_wait_initial_configure(src)
+        src = patch_ios_fontconfig_init(src)
+        src = patch_ios_font_helper_fn(src)
+        src = patch_ios_main_fcinit(src)
+        src = patch_ios_font_default(src)
+        src = patch_android_font_size(src)
+        src = patch_ios_terminal_font_face(src)
+        src = patch_ios_font_metrics_log(src)
+        src = patch_ios_redraw_show_text(src)
+        src = patch_ios_redraw_visible_fg(src)
+        src = patch_ios_redraw_background(src)
+        src = patch_ios_initial_redraw(src)
+        src = patch_ios_glyph_fallback(src)
+        src = patch_ios_terminal_master(src)
+        src = patch_ios_terminal_destroy_master(src)
+        src = patch_ios_terminal_write(src)
+        src = patch_ios_max_escape(src)
+        src = patch_osc7_and_prompt(src)
     path.write_text(src)
-    print(f"Patched {path}")
+    print(f"Patched {path}" + (" (fonts-only)" if fonts_only else ""))
 
 
 if __name__ == "__main__":
