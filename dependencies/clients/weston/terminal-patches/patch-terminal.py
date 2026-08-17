@@ -615,6 +615,15 @@ static int wwn_term_log_enabled(void) {
 \t\tclose(pipes[0]);
 \t\tsetenv("TERM", option_term, 1);
 \t\tsetenv("COLORTERM", option_term, 1);
+\t\t/* Always start the shell in $HOME. Launchers (NSTask, panel,
+\t\t * Android fork) often inherit cwd="/" or XDG_RUNTIME_DIR. */
+\t\t{
+\t\t\tconst char *home = getenv("HOME");
+\t\t\tif (home && home[0] && chdir(home) != 0)
+\t\t\t\tfprintf(stderr,
+\t\t\t\t\t"weston-terminal: chdir(HOME=%s) failed: %s\\n",
+\t\t\t\t\thome, strerror(errno));
+\t\t}
 \t\tif (execl(path, path, NULL)) {
 \t\t\tprintf("exec failed: %s\\n", strerror(errno));
 \t\t\texit(EXIT_FAILURE);
