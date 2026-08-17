@@ -246,57 +246,6 @@ terminal_ios_load_font(cairo_t *cr, int bold)
     return src.replace(anchor, helper + anchor, 1)
 
 
-def patch_ios_font_cell_advance(src: str) -> str:
-    """Cell pitch must come from x_advance, not ink bbox width.
-
-    Upstream divides cairo_text_extents().width by strlen. That ink width is
-    usually narrower than the monospace advance (side bearings). After we
-    switched macOS/iOS/Android to cairo-ft, the undersized grid shows up as
-    every glyph (and the cursor) drifting further from its cell.
-    """
-    if "monospace cell pitch from x_advance" in src:
-        return src
-    old_howmany = """\t/* Compute the average ascii glyph width */
-\tcairo_text_extents(cr, TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS,
-\t\t\t   &text_extents);
-\tterminal->average_width = howmany
-\t\t(text_extents.width,
-\t\t strlen(TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS));
-\tterminal->average_width = ceil(terminal->average_width);"""
-    old_weston = old_howmany.replace("howmany", "WESTON_HOWMANY")
-    new = """\t/* Compute the average ascii glyph width */
-#if defined(WWN_MOBILE_TERMINAL)
-\t/* monospace cell pitch from x_advance (not ink .width) */
-\tcairo_text_extents(cr, TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS,
-\t\t\t   &text_extents);
-\tterminal->average_width =
-\t\ttext_extents.x_advance /
-\t\t(double)strlen(TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS);
-\t{
-\t\tcairo_text_extents_t one;
-\t\tcairo_text_extents(cr, "M", &one);
-\t\tif (one.x_advance > terminal->average_width)
-\t\t\tterminal->average_width = one.x_advance;
-\t\tcairo_text_extents(cr, "W", &one);
-\t\tif (one.x_advance > terminal->average_width)
-\t\t\tterminal->average_width = one.x_advance;
-\t}
-\tterminal->average_width = ceil(terminal->average_width);
-#else
-\tcairo_text_extents(cr, TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS,
-\t\t\t   &text_extents);
-\tterminal->average_width = howmany
-\t\t(text_extents.width,
-\t\t strlen(TERMINAL_DRAW_SINGLE_WIDE_CHARACTERS));
-\tterminal->average_width = ceil(terminal->average_width);
-#endif"""
-    if old_howmany in src:
-        return src.replace(old_howmany, new, 1)
-    if old_weston in src:
-        return src.replace(old_weston, new.replace("howmany", "WESTON_HOWMANY"), 1)
-    raise SystemExit("terminal average_width advance patch anchor missing")
-
-
 def patch_ios_font_metrics_log(src: str) -> str:
     old = "\tterminal->average_width = ceil(terminal->average_width);\n\n\tcairo_destroy(cr);"
     new = """\tterminal->average_width = ceil(terminal->average_width);
@@ -475,7 +424,6 @@ def patch_fonts_only(src: str) -> str:
     src = patch_ios_font_default(src)
     src = patch_android_font_size(src)
     src = patch_ios_terminal_font_face(src)
-    src = patch_ios_font_cell_advance(src)
     src = patch_ios_font_metrics_log(src)
     src = patch_ios_redraw_show_text(src)
     src = patch_ios_redraw_visible_fg(src)
@@ -2072,7 +2020,6 @@ def main() -> None:
         src = patch_ios_font_default(src)
         src = patch_android_font_size(src)
         src = patch_ios_terminal_font_face(src)
-        src = patch_ios_font_cell_advance(src)
         src = patch_ios_font_metrics_log(src)
         src = patch_ios_redraw_show_text(src)
         src = patch_ios_redraw_visible_fg(src)
