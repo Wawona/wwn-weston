@@ -99,11 +99,11 @@ def patch_ios_terminal_font_face(src: str) -> str:
 \t\tWWN_TERM_LOG("weston-terminal: fontconfig/cairo-ft load failed; "
 \t\t\t     "FONTCONFIG_FILE=%s\\n",
 \t\t\t     getenv("FONTCONFIG_FILE") ? getenv("FONTCONFIG_FILE") : "(unset)");
-\t\tcairo_select_font_face(cr, "DejaVu Sans Mono",
+\t\tcairo_select_font_face(cr, "JetBrainsMonoNL Nerd Font Mono",
 \t\t\t\t\tCAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
 \t\tterminal->font_bold = cairo_get_scaled_font(cr);
 \t\tcairo_scaled_font_reference(terminal->font_bold);
-\t\tcairo_select_font_face(cr, "DejaVu Sans Mono",
+\t\tcairo_select_font_face(cr, "JetBrainsMonoNL Nerd Font Mono",
 \t\t\t\t\tCAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
 \t\tterminal->font_normal = cairo_get_scaled_font(cr);
 \t\tcairo_scaled_font_reference(terminal->font_normal);
@@ -131,7 +131,7 @@ def patch_ios_terminal_font_face(src: str) -> str:
 def patch_ios_font_default(src: str) -> str:
     old = '\tweston_config_section_get_string(s, "font", &option_font, "monospace");'
     new = """#if defined(WWN_MOBILE_TERMINAL)
-\tweston_config_section_get_string(s, "font", &option_font, "DejaVu Sans Mono");
+\tweston_config_section_get_string(s, "font", &option_font, "JetBrainsMonoNL Nerd Font Mono");
 #else
 \tweston_config_section_get_string(s, "font", &option_font, "monospace");
 #endif"""
@@ -144,6 +144,7 @@ def patch_ios_fontconfig_init(src: str) -> str:
     anchor = '#include "window.h"'
     insert = """
 #if defined(WWN_MOBILE_TERMINAL)
+#include <unistd.h>
 #include <fontconfig/fontconfig.h>
 #include <cairo-ft.h>
 #endif
@@ -153,7 +154,7 @@ def patch_ios_fontconfig_init(src: str) -> str:
     if "fontconfig/fontconfig.h" in src and "cairo-ft.h" not in src:
         return src.replace(
             "#include <fontconfig/fontconfig.h>",
-            "#include <fontconfig/fontconfig.h>\n#include <cairo-ft.h>",
+            "#include <unistd.h>\n#include <fontconfig/fontconfig.h>\n#include <cairo-ft.h>",
             1,
         )
     if anchor not in src:
@@ -176,11 +177,27 @@ terminal_ios_load_font(cairo_t *cr, int bold)
 \tconst char *direct = getenv("WAWONA_MONO_FONT");
 
 \tif (direct && direct[0]) {
-\t\tsnprintf(spec, sizeof spec, "file:%s:size=%d:weight=%d",
-\t\t\t direct, option_font_size, bold ? 200 : 80);
+\t\tchar bold_path[512];
+\t\tconst char *file = direct;
+\t\tif (bold) {
+\t\t\tsize_t n = strlen(direct);
+\t\t\tif (n + 1 < sizeof(bold_path)) {
+\t\t\t\tmemcpy(bold_path, direct, n + 1);
+\t\t\t\tchar *r = strstr(bold_path, "Regular.ttf");
+\t\t\t\tif (r) {
+\t\t\t\t\t/* JetBrainsMonoNLNerdFontMono-Regular.ttf → -Bold.ttf */
+\t\t\t\t\tmemcpy(r, "Bold.ttf", 8);
+\t\t\t\t\tr[8] = '\\0';
+\t\t\t\t\tif (access(bold_path, R_OK) == 0)
+\t\t\t\t\t\tfile = bold_path;
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\tsnprintf(spec, sizeof spec, "file:%s:size=%d",
+\t\t\t file, option_font_size);
 \t} else {
 \t\tif (!family || !family[0])
-\t\t\tfamily = "DejaVu Sans Mono";
+\t\t\tfamily = "JetBrainsMonoNL Nerd Font Mono";
 \t\tsnprintf(spec, sizeof spec, "%s:size=%d:weight=%d",
 \t\t\t family, option_font_size, bold ? 200 : 80);
 \t}
@@ -352,6 +369,8 @@ def patch_mobile_bootstrap(src: str) -> str:
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
+#include <limits.h>
+#include <stdlib.h>
 #if (defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)) || defined(__ANDROID__)
 #ifndef WWN_MOBILE_TERMINAL
 #define WWN_MOBILE_TERMINAL 1
@@ -392,13 +411,20 @@ def patch_osc7_and_prompt(src: str) -> str:
         "\t\t\tconst char *sl = strchr(p + 7, '/');\n"
         "\t\t\tif (sl) {\n"
         "\t\t\t\tconst char *hm = getenv(\"HOME\");\n"
+        "\t\t\t\tchar hm_real[4096];\n"
+        "\t\t\t\tchar sl_real[4096];\n"
+        "\t\t\t\tif (hm && realpath(hm, hm_real))\n"
+        "\t\t\t\t\thm = hm_real;\n"
+        "\t\t\t\tconst char *cwd = sl;\n"
+        "\t\t\t\tif (realpath(sl, sl_real))\n"
+        "\t\t\t\t\tcwd = sl_real;\n"
         "\t\t\t\tsize_t hlen = hm ? strlen(hm) : 0;\n"
         "\t\t\t\tchar *t = NULL;\n"
-        "\t\t\t\tif (hm && strncmp(sl, hm, hlen) == 0\n"
-        "\t\t\t\t    && (sl[hlen] == '/' || sl[hlen] == '\\0'))\n"
-        "\t\t\t\t\tasprintf(&t, \"~%s\", sl + hlen);\n"
+        "\t\t\t\tif (hm && hlen > 0 && strncmp(cwd, hm, hlen) == 0\n"
+        "\t\t\t\t    && (cwd[hlen] == '/' || cwd[hlen] == '\\0'))\n"
+        "\t\t\t\t\tasprintf(&t, \"~%s\", cwd + hlen);\n"
         "\t\t\t\telse\n"
-        "\t\t\t\t\tt = strdup(sl);\n"
+        "\t\t\t\t\tt = strdup(cwd);\n"
         "\t\t\t\tif (t) {\n"
         "\t\t\t\t\tfree(terminal->title);\n"
         "\t\t\t\t\tterminal->title = t;\n"

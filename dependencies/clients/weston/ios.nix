@@ -370,7 +370,8 @@ path.write_text(text.replace(old, new, 1))
 PY
     # CSD titlebar uses Pango "sans-serif Bold 10" — on watch/iOS that family
     # often fails Fc match and draws tofu boxes while mono cell text (file:
-    # WAWONA_MONO_FONT) still works. Prefer DejaVu Sans by name (bundled).
+    # WAWONA_MONO_FONT) still works. Prefer JetBrainsMono NL Nerd Font Mono
+    # by name (bundled); DejaVu Sans remains for CSD / sans UI.
     python3 <<'PY'
 from pathlib import Path
 path = Path("shared/cairo-util.c")
