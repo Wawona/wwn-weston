@@ -255,7 +255,7 @@ PYEOF
     python3 _patch_terminal_title.py
     rm _patch_terminal_title.py
 
-    # Fontconfig + cairo-ft loader so bundled JetBrainsMono NL Nerd Font Mono
+    # Fontconfig + cairo-ft loader so bundled DejaVuSansM Nerd Font Mono
     # (WAWONA_MONO_FONT / fonts.conf) is used. Without this, macOS cairo toy
     # fonts ignore FONTCONFIG_FILE and Nerd icons render as empty cells.
     cp ${./terminal-patches/patch-terminal.py} ./patch-terminal-fonts.py
