@@ -99,11 +99,11 @@ def patch_ios_terminal_font_face(src: str) -> str:
 \t\tWWN_TERM_LOG("weston-terminal: fontconfig/cairo-ft load failed; "
 \t\t\t     "FONTCONFIG_FILE=%s\\n",
 \t\t\t     getenv("FONTCONFIG_FILE") ? getenv("FONTCONFIG_FILE") : "(unset)");
-\t\tcairo_select_font_face(cr, "DejaVuSansM Nerd Font Mono",
+\t\tcairo_select_font_face(cr, "JetBrainsMonoNL Nerd Font Mono",
 \t\t\t\t\tCAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
 \t\tterminal->font_bold = cairo_get_scaled_font(cr);
 \t\tcairo_scaled_font_reference(terminal->font_bold);
-\t\tcairo_select_font_face(cr, "DejaVuSansM Nerd Font Mono",
+\t\tcairo_select_font_face(cr, "JetBrainsMonoNL Nerd Font Mono",
 \t\t\t\t\tCAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
 \t\tterminal->font_normal = cairo_get_scaled_font(cr);
 \t\tcairo_scaled_font_reference(terminal->font_normal);
@@ -131,7 +131,7 @@ def patch_ios_terminal_font_face(src: str) -> str:
 def patch_ios_font_default(src: str) -> str:
     old = '\tweston_config_section_get_string(s, "font", &option_font, "monospace");'
     new = """#if defined(WWN_MOBILE_TERMINAL)
-\tweston_config_section_get_string(s, "font", &option_font, "DejaVuSansM Nerd Font Mono");
+\tweston_config_section_get_string(s, "font", &option_font, "JetBrainsMonoNL Nerd Font Mono");
 #else
 \tweston_config_section_get_string(s, "font", &option_font, "monospace");
 #endif"""
@@ -185,7 +185,7 @@ terminal_ios_load_font(cairo_t *cr, int bold)
 \t\t\t\tmemcpy(bold_path, direct, n + 1);
 \t\t\t\tchar *r = strstr(bold_path, "Regular.ttf");
 \t\t\t\tif (r) {
-\t\t\t\t\t/* DejaVuSansMNerdFontMono-Regular.ttf → -Bold.ttf */
+\t\t\t\t\t/* JetBrainsMonoNLNerdFontMono-Regular.ttf → -Bold.ttf */
 \t\t\t\t\tmemcpy(r, "Bold.ttf", 8);
 \t\t\t\t\tr[8] = '\\0';
 \t\t\t\t\tif (access(bold_path, R_OK) == 0)
@@ -197,7 +197,7 @@ terminal_ios_load_font(cairo_t *cr, int bold)
 \t\t\t file, option_font_size);
 \t} else {
 \t\tif (!family || !family[0])
-\t\t\tfamily = "DejaVuSansM Nerd Font Mono";
+\t\t\tfamily = "JetBrainsMonoNL Nerd Font Mono";
 \t\tsnprintf(spec, sizeof spec, "%s:size=%d:weight=%d",
 \t\t\t family, option_font_size, bold ? 200 : 80);
 \t}
