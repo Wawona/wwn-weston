@@ -38,7 +38,7 @@ Cross-compiled for Apple mobile and Android (`dependencies/clients/weston/ios.ni
 
 **GL client (optional):** `simple-egl` → `simple_egl_main` when `enableGlClients = true` (iland + ANGLE stack must link; see `.#weston-ios-gl` in the Wawona flake).
 
-**macOS** (`macos.nix`): Meson build of Weston with Darwin shims — compositor backends, clients, and packaging for the macOS app (not the in-process `*_main` archive model).
+**macOS** (`macos-drm-shared.nix`, flake key `weston.macos`): Meson shared build with Darwin shims plus `drm-backend.so` / `gl-renderer.so` for Mode B fork/exec (DRM/EGL via `dynamic_lookup`; no Mode A/B LC_LOAD). Nested client path still defaults to the Wayland backend. Legacy client-only recipe kept as `macos.nix`.
 
 **Linux** (`linux.nix`): Host/reference Weston via the shared Linux platform dispatcher.
 

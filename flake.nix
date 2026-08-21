@@ -46,7 +46,7 @@
           ipados = westonDir + "/ios.nix";
           visionos = westonDir + "/visionos.nix";
           watchos = westonDir + "/watchos.nix";
-          macos = westonDir + "/macos.nix";
+          macos = westonDir + "/macos-drm-shared.nix";
         };
         weston-compositor = withPlatformVariants {
           android = westonDir + "/compositor-android.nix";
