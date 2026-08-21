@@ -330,7 +330,7 @@ WWN_EXPORT int
 udev_input_enable(struct udev_input *input)
 {
 	(void)input;
-	return -1;
+	return 0;
 }
 
 WWN_EXPORT void
@@ -349,7 +349,9 @@ udev_input_init(struct udev_input *input, struct weston_compositor *c,
 	(void)udev;
 	(void)seat_id;
 	(void)configure_device;
-	return -1;
+	/* Mode B: no libinput. --continue-without-input is the client flag;
+	 * DRM backend still requires udev_input_init to succeed. */
+	return 0;
 }
 
 WWN_EXPORT void
