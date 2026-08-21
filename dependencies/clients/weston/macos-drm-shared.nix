@@ -306,7 +306,109 @@ PY
     sed -i "s/dependency('libinput'/dependency('libinput', required: false/g" meson.build
     sed -i "s/dependency('libevdev'/dependency('libevdev', required: false/g" meson.build
     sed -i "s/dependency('libdrm'/dependency('libdrm', required: false/g" meson.build
-    sed -i "s/'launcher-libseat.c'/'..\/include\/empty.c'/g" libweston/meson.build
+    sed -i "s/'launcher-libseat.c'/'wwn-drm-link-stubs.c'/g" libweston/meson.build
+    # DRM backend dlopens against flat-namespace symbols that lived in
+    # launcher-libseat.c / libinput-seat.c. Provide stubs in libweston.
+    cat > libweston/wwn-drm-link-stubs.c <<'EOF'
+#include "config.h"
+#include <stddef.h>
+#include <stdbool.h>
+#include "libinput-seat.h"
+#include "launcher-impl.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+#define WWN_EXPORT __attribute__((visibility("default")))
+#else
+#define WWN_EXPORT
+#endif
+
+WWN_EXPORT int
+udev_input_enable(struct udev_input *input)
+{
+	(void)input;
+	return -1;
+}
+
+WWN_EXPORT void
+udev_input_disable(struct udev_input *input)
+{
+	(void)input;
+}
+
+WWN_EXPORT int
+udev_input_init(struct udev_input *input, struct weston_compositor *c,
+		struct udev *udev, const char *seat_id,
+		udev_configure_device_t configure_device)
+{
+	(void)input;
+	(void)c;
+	(void)udev;
+	(void)seat_id;
+	(void)configure_device;
+	return -1;
+}
+
+WWN_EXPORT void
+udev_input_destroy(struct udev_input *input)
+{
+	(void)input;
+}
+
+WWN_EXPORT struct udev_seat *
+udev_seat_get_named(struct udev_input *u, const char *seat_name)
+{
+	(void)u;
+	(void)seat_name;
+	return NULL;
+}
+
+static int
+wwn_libseat_connect(struct weston_launcher **launcher_out,
+		    struct weston_compositor *compositor, const char *seat_id,
+		    bool sync_drm)
+{
+	(void)launcher_out;
+	(void)compositor;
+	(void)seat_id;
+	(void)sync_drm;
+	return -1;
+}
+
+static void wwn_libseat_destroy(struct weston_launcher *launcher) { (void)launcher; }
+static int wwn_libseat_open(struct weston_launcher *launcher, const char *path, int flags)
+{
+	(void)launcher;
+	(void)path;
+	(void)flags;
+	return -1;
+}
+static void wwn_libseat_close(struct weston_launcher *launcher, int fd)
+{
+	(void)launcher;
+	(void)fd;
+}
+static int wwn_libseat_activate_vt(struct weston_launcher *launcher, int vt)
+{
+	(void)launcher;
+	(void)vt;
+	return -1;
+}
+static int wwn_libseat_get_vt(struct weston_launcher *launcher)
+{
+	(void)launcher;
+	return -1;
+}
+
+WWN_EXPORT const struct launcher_interface launcher_libseat_iface = {
+	.name = "libseat-stub",
+	.connect = wwn_libseat_connect,
+	.destroy = wwn_libseat_destroy,
+	.open = wwn_libseat_open,
+	.close = wwn_libseat_close,
+	.activate_vt = wwn_libseat_activate_vt,
+	.get_vt = wwn_libseat_get_vt,
+};
+EOF
     sed -i "s/dependency('libseat'/dependency('libseat', required: false/g" libweston/meson.build
     sed -i "s/dependency('gbm'/dependency('gbm', required: true/g" libweston/meson.build
     sed -i "s/dependency('egl'/dependency('egl', required: true/g" libweston/meson.build
