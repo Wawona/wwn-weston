@@ -161,7 +161,7 @@ stdenv.mkDerivation rec {
     "-Dpipewire=false"
     "-Dsystemd=false"
     "-Dcolor-management-lcms=false"
-  ] ++ lib.optionalString stdenv.isDarwin [
+  ] ++ lib.optionalString stdenv.hostPlatform.isDarwin [
     "-Dremoting=false"
     "-Dshell-fullscreen=false"
     "-Dshell-ivi=false"
@@ -238,7 +238,7 @@ EOF
   NIX_LDFLAGS = "-L${epoll-shim}/lib -lepoll-shim";
 
   # DRM/GL meson probes can spuriously enable Linux memfd seals on Darwin.
-  postConfigure = lib.optionalString stdenv.isDarwin ''
+  postConfigure = lib.optionalString stdenv.hostPlatform.isDarwin ''
     echo "postConfigure cwd=$PWD"
     find . -name config.h -print
     for f in $(find . -name config.h); do
@@ -252,7 +252,7 @@ EOF
     done
   '';
 
-  postPatch = lib.optionalString stdenv.isDarwin ''
+  postPatch = lib.optionalString stdenv.hostPlatform.isDarwin ''
     # Darwin has no memfd seals; force the shm fallback path regardless of meson probes.
     python3 <<'PY'
 from pathlib import Path

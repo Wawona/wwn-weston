@@ -77,7 +77,7 @@ stdenv.mkDerivation rec {
     "-Dpipewire=false"
     "-Dsystemd=false"
     "-Dcolor-management-lcms=false"
-  ] ++ lib.optionalString stdenv.isDarwin [
+  ] ++ lib.optionalString stdenv.hostPlatform.isDarwin [
     "-Dremoting=false"
     "-Dshell-fullscreen=false"
     "-Dshell-ivi=false"
@@ -141,7 +141,7 @@ EOF
   NIX_CFLAGS_COMPILE = "-I${epoll-shim}/include/libepoll-shim -I$PWD/include";
   NIX_LDFLAGS = "-L${epoll-shim}/lib -lepoll-shim";
 
-  postPatch = lib.optionalString stdenv.isDarwin ''
+  postPatch = lib.optionalString stdenv.hostPlatform.isDarwin ''
     # Skip building problematic subdirectories (keeping compositor and shells)
     sed -i "/subdir('tests')/d" meson.build
     
