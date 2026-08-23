@@ -559,13 +559,11 @@ elif "wwn_mobile_display_roundtrip(display)" not in text:
         1,
     )
 
-# --- wwn #96: refcount live displays so the process-global cairo/fontconfig
-# teardown (cleanup_after_cairo -> cairo_debug_reset_static_data / FcFini) only
-# runs when the LAST toytoolkit display is destroyed. In the Apple in-process
-# model every *_main client shares one address space and one copy of window.c,
-# so a second client tearing down while another still holds cairo/pango state
-# aborts (SIGABRT in cairo_debug_reset_static_data). All in-process clients
-# share this file-static counter, so it correctly tracks displays across them.
+# --- wwn #96: track live toytoolkit displays. Never call cleanup_after_cairo
+# (cairo_debug_reset_static_data / FcFini) in this in-process host. Foot/fcft
+# keep scaled fonts in cairo's process-global map. A last-display refcount
+# still hits 0 when weston-terminal is the only toytoolkit client, then
+# aborts in _cairo_hash_table_destroy while Foot is still drawing.
 if "wwn_toytoolkit_live_displays" not in text:
     counter_anchor = (
         "struct display *\n"
@@ -598,16 +596,20 @@ if "wwn_toytoolkit_live_displays" not in text:
         1,
     )
 
-    # Only reset process-global cairo/fontconfig state on the last destroy.
+    # Only decrement the toytoolkit display count. Never call
+    # cleanup_after_cairo / cairo_debug_reset_static_data / FcFini in this
+    # in-process host. Foot (fcft) and pango keep scaled fonts in cairo's
+    # process-global map. The live-display counter is 0 when weston-terminal
+    # is the only toytoolkit client, so a last-display check still fires
+    # while Foot is drawing and aborts in _cairo_hash_table_destroy.
     cleanup_anchor = "\tcleanup_after_cairo();\n"
     if cleanup_anchor not in text:
         raise SystemExit("window.c cleanup_after_cairo anchor missing (refcount)")
     text = text.replace(
         cleanup_anchor,
-        "\tif (--wwn_toytoolkit_live_displays <= 0) {\n"
-        "\t\twwn_toytoolkit_live_displays = 0;\n"
-        "\t\tcleanup_after_cairo();\n"
-        "\t}\n",
+        "\tif (wwn_toytoolkit_live_displays > 0)\n"
+        "\t\twwn_toytoolkit_live_displays--;\n"
+        "\t/* skip cleanup_after_cairo: Foot/fcft share libcairo in-process */\n",
         1,
     )
 

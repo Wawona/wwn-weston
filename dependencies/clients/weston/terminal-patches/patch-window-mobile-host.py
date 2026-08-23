@@ -69,12 +69,11 @@ def patch_display_run_epoll(text: str) -> str:
 
 
 def patch_cairo_refcount(text: str) -> str:
-    """wwn #96: refcount live toytoolkit displays so the process-global
-    cairo/fontconfig teardown (cleanup_after_cairo -> cairo_debug_reset_static_data
-    / FcFini) only runs on the LAST display destroy. Android runs every *_main
-    client in one process sharing one copy of window.c, so a second client tearing
-    down while another still holds cairo/pango state aborts (SIGABRT). The
-    file-static counter is shared across all in-process clients."""
+    """wwn #96: track live toytoolkit displays. Do not call
+    cleanup_after_cairo / cairo_debug_reset_static_data / FcFini: Foot (fcft)
+    and other in-process clients keep cairo scaled fonts. A last-display
+    check still fires while Foot is drawing (Foot is not toytoolkit) and
+    aborts in _cairo_hash_table_destroy."""
     if "wwn_toytoolkit_live_displays" in text:
         return text
 
@@ -114,10 +113,9 @@ def patch_cairo_refcount(text: str) -> str:
         raise SystemExit("window.c cleanup_after_cairo anchor missing (refcount)")
     text = text.replace(
         cleanup_anchor,
-        "\tif (--wwn_toytoolkit_live_displays <= 0) {\n"
-        "\t\twwn_toytoolkit_live_displays = 0;\n"
-        "\t\tcleanup_after_cairo();\n"
-        "\t}\n",
+        "\tif (wwn_toytoolkit_live_displays > 0)\n"
+        "\t\twwn_toytoolkit_live_displays--;\n"
+        "\t/* skip cleanup_after_cairo: Foot/fcft share libcairo in-process */\n",
         1,
     )
     return text
