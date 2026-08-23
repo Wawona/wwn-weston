@@ -796,7 +796,49 @@ if "wwn_effective_module_dir" not in text:
     text = text.replace(old, new, 1)
     compositor.write_text(text)
 
-print("patched macOS weston log init + bundled module dirs")
+main = Path("compositor/main.c")
+text = main.read_text()
+old = """static char *
+weston_choose_default_backend(void)
+{
+	char *backend = NULL;
+
+	if (getenv("WAYLAND_DISPLAY") || getenv("WAYLAND_SOCKET"))
+		backend = strdup("wayland");
+	else if (getenv("DISPLAY"))
+		backend = strdup("x11");
+	else
+		backend = strdup(WESTON_NATIVE_BACKEND);
+
+	return backend;
+}
+"""
+new = """static char *
+weston_choose_default_backend(void)
+{
+	char *backend = NULL;
+	const char *modeb;
+
+	/* Classic Take Over TTY: no host Wayland. Use iland DRM/KMS/GBM. */
+	modeb = getenv("WWN_MODEB_TTY");
+	if (modeb && modeb[0] && strcmp(modeb, "0") != 0)
+		return strdup("drm");
+
+	if (getenv("WAYLAND_DISPLAY") || getenv("WAYLAND_SOCKET"))
+		backend = strdup("wayland");
+	else if (getenv("DISPLAY"))
+		backend = strdup("x11");
+	else
+		backend = strdup(WESTON_NATIVE_BACKEND);
+
+	return backend;
+}
+"""
+if old not in text:
+    raise SystemExit("compositor/main.c: weston_choose_default_backend anchor missing")
+main.write_text(text.replace(old, new, 1))
+
+print("patched macOS weston log init + bundled module dirs + Mode B DRM default")
 PY
   '';
 
