@@ -77,8 +77,8 @@
           macos = westonDir + "/compositor-macos-drm.nix";
         };
         # Built outside weston's meson so it can link iland's Wayland-EGL winsys
-        # instead of the wayland-egl stub; Apple mobile still has a stub client
-        # until the same wiring lands there.
+        # instead of the wayland-egl stub. Apple mobile in-process uses the same
+        # simple-egl.c via weston's ios.nix (not a KMS rehost).
         weston-simple-egl = withPlatformVariants {
           android = null;
           ios = null;

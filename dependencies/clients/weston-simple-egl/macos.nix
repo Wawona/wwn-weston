@@ -108,11 +108,15 @@ EOF
 
     FRAMEWORKS="-framework IOSurface -framework Foundation -framework CoreFoundation \
       -framework CoreGraphics -framework Accelerate -framework QuartzCore -framework Metal"
-    # libiland_wayland_egl carries wl_egl_window_* and EGL_PLATFORM_WAYLAND and
-    # depends on the core archive, so it goes first. Never -lwayland-egl: that
-    # dylib is a stub whose entry points abort.
-    LIBS="-L${iland}/lib -liland_wayland_egl -liland_userland \
-      -L${angle}/lib -lEGL -lGLESv2 \
+    # force_load the winsys so the constructor sets iland_wl_ops (EGL_PLATFORM_WAYLAND).
+    # GLES comes from ANGLE's libGLESv2. Do not -lEGL from ANGLE: that LC_LOADs
+    # ANGLE as the public EGL ABI, and weston_platform_get_egl_display then
+    # eglGetProcAddress's into ANGLE, which has no Wayland platform on Apple.
+    # Never -lwayland-egl: that dylib is a stub whose entry points abort.
+    LIBS="-L${iland}/lib \
+      -Wl,-force_load,${iland}/lib/libiland_wayland_egl.a \
+      -Wl,-force_load,${iland}/lib/libiland_userland.a \
+      -L${angle}/lib -lGLESv2 \
       -L${libwayland}/lib -lwayland-client -lwayland-cursor"
 
     SUPPORT="shared/matrix.c \
