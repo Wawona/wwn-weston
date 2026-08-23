@@ -1,0 +1,20 @@
+--- a/libweston/backend-wayland/wayland.c
++++ b/libweston/backend-wayland/wayland.c
+@@ -1363,7 +1363,16 @@ wayland_output_attach_head
+ 	if (!wl_list_empty(&output->base.head_list))
+ 		return -1;
+ 
+-	if (head->parent_output) {
++	/* Nested under Wawona: parent wl_output.mode is physical pixels
++	 * (logical size * host scale). Copying that as weston's native mode
++	 * then applying xdg_toplevel configures in points makes every
++	 * resize fail ("Mode switch failed"). Size the floating window from
++	 * xdg instead. WAWONA_NESTED_WAYLAND=1 on every nested launch.
++	 */
++	if (head->parent_output &&
++	    !(getenv("WAWONA_NESTED_WAYLAND") &&
++	      getenv("WAWONA_NESTED_WAYLAND")[0] &&
++	      strcmp(getenv("WAWONA_NESTED_WAYLAND"), "0") != 0)) {
+ 		if (wayland_output_setup_for_parent_output(output,
+ 							   head->parent_output) < 0)
+ 			return -1;

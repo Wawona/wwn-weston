@@ -98,6 +98,7 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply rec {
   };
   patches = [
     ./patches/0001-constraints-mark-reused-buffer-busy.patch
+    ./patches/0002-wayland-backend-nested-xdg-size.patch
   ];
 
   wayland_cursor_h = fetchurl {

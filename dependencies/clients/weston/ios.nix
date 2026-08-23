@@ -127,6 +127,7 @@ stdenv.mkDerivation rec {
   };
   patches = [
     ./patches/0001-constraints-mark-reused-buffer-busy.patch
+    ./patches/0002-wayland-backend-nested-xdg-size.patch
   ];
 
   # wayland-cursor sources are compiled here for headers/TU glue; os_create_anonymous_file

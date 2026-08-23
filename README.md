@@ -71,7 +71,7 @@ Standalone `libweston_simple_shm.a` (or macOS/Linux binaries) from `dependencies
 | tvOS | `tvos.nix` → `ios.nix` | `compositor-tvos.nix` | — | `tvos.nix` |
 | watchOS | `watchos.nix` → `ios.nix` | `compositor-watchos.nix` | — | `watchos.nix` |
 | visionOS | `visionos.nix` → `ios.nix` | `compositor-visionos.nix` | — | `visionos.nix` |
-| macOS | `macos.nix` | — | — | `macos.nix` |
+| macOS | `macos-drm-shared.nix` | — | (shared `drm-backend.so` in `weston`) | `macos.nix` |
 | Android | `android.nix` | `compositor-android.nix` | — | — (use `patched-src.nix` / iOS-style embed in app) |
 | Wear OS | `wearos.nix` → `android.nix` | — | — | — |
 | Linux | `linux.nix` | — | — | `linux.nix` (standalone binary) |
