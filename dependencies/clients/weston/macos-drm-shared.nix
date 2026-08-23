@@ -150,7 +150,9 @@ stdenv.mkDerivation rec {
     "-Dbackend-wayland=true"
     "-Dbackend-x11=false"
     "-Dxwayland=false"
-    "-Dbackend-default=wayland"
+    # Mode B fork/exec recipe. Nested Mode A always passes --backend=wayland.
+    # Bare `weston` on a Classic TTY must be DRM/KMS/GBM (iland), not nested.
+    "-Dbackend-default=drm"
     "-Drenderer-gl=true"
     "-Db_lundef=false"
     "-Dimage-jpeg=true"
@@ -813,18 +815,46 @@ weston_choose_default_backend(void)
 	return backend;
 }
 """
-new = """static char *
+new = """static int
+wwn_host_wayland_live(void)
+{
+	const char *sock = getenv("WAYLAND_SOCKET");
+	const char *disp = getenv("WAYLAND_DISPLAY");
+	const char *rt;
+	char path[512];
+
+	if (sock && sock[0])
+		return 1;
+	if (!disp || !disp[0])
+		return 0;
+	if (disp[0] == '/')
+		return access(disp, F_OK) == 0;
+	rt = getenv("XDG_RUNTIME_DIR");
+	if (!rt || !rt[0])
+		rt = "/tmp";
+	if (snprintf(path, sizeof(path), "%s/%s", rt, disp) >= (int)sizeof(path))
+		return 0;
+	return access(path, F_OK) == 0;
+}
+
+static char *
 weston_choose_default_backend(void)
 {
 	char *backend = NULL;
 	const char *modeb;
 
-	/* Classic Take Over TTY: no host Wayland. Use iland DRM/KMS/GBM. */
+	/* Classic Take Over: no host Wayland. Stale WAYLAND_DISPLAY must not
+	 * select nested. iland DRM/KMS/GBM. */
 	modeb = getenv("WWN_MODEB_TTY");
 	if (modeb && modeb[0] && strcmp(modeb, "0") != 0)
 		return strdup("drm");
+#ifdef __APPLE__
+	if (!wwn_host_wayland_live())
+		return strdup("drm");
+	return strdup("wayland");
+#endif
 
-	if (getenv("WAYLAND_DISPLAY") || getenv("WAYLAND_SOCKET"))
+	if (wwn_host_wayland_live())
 		backend = strdup("wayland");
 	else if (getenv("DISPLAY"))
 		backend = strdup("x11");
