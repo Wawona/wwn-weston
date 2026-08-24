@@ -4,21 +4,9 @@
  WL_EXPORT char *
  wet_get_libexec_path(const char *name)
  {
-+	const char *dir = getenv("WESTON_LIBEXEC_DIR");
++	const char *libexec_dir = getenv("WESTON_LIBEXEC_DIR");
 +
-+	if (dir && dir[0])
-+		return wet_get_binary_path(name, dir);
++	if (libexec_dir && libexec_dir[0])
++		return wet_get_binary_path(name, libexec_dir);
  	return wet_get_binary_path(name, LIBEXECDIR);
  }
-
-@@ -994,6 +994,10 @@
- WL_EXPORT char *
- wet_get_libexec_path(const char *name)
- {
-+	const char *dir = getenv("WESTON_LIBEXEC_DIR");
-+
-+	if (dir && dir[0])
-+		return wet_get_binary_path(name, dir);
- 	return wet_get_binary_path(name, LIBEXECDIR);
- }
- 
