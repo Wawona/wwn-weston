@@ -844,10 +844,11 @@ weston_choose_default_backend(void)
 	char *backend = NULL;
 	const char *modeb;
 
-	/* Classic Take Over: no host Wayland. Stale WAYLAND_DISPLAY must not
-	 * select nested. iland DRM/KMS/GBM. */
+	/* Classic session compositor: no parent Wayland. Inner weston/niri
+	 * inside that compositor still nest (live WAYLAND_DISPLAY). */
 	modeb = getenv("WWN_MODEB_TTY");
-	if (modeb && modeb[0] && strcmp(modeb, "0") != 0)
+	if (modeb && modeb[0] && strcmp(modeb, "0") != 0 &&
+	    !wwn_host_wayland_live())
 		return strdup("drm");
 #ifdef __APPLE__
 	if (!wwn_host_wayland_live())
@@ -882,6 +883,7 @@ force = """			if (!backends)
 	{
 		const char *modeb = getenv("WWN_MODEB_TTY");
 		if (modeb && modeb[0] && strcmp(modeb, "0") != 0 &&
+		    !wwn_host_wayland_live() &&
 		    backends &&
 		    (strcmp(backends, "wayland") == 0 ||
 		     strncmp(backends, "wayland,", 8) == 0 ||

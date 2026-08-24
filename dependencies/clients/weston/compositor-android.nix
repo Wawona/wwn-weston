@@ -536,14 +536,29 @@ PY
     cat > compositor/wwn-weston-compositor-main.c <<'EOF'
 #include "config.h"
 #include <signal.h>
+#include <stdatomic.h>
+#include <stdio.h>
 #include "weston.h"
 
 volatile sig_atomic_t wwn_weston_compositor_shutdown_requested = 0;
 
+static atomic_int wwn_weston_main_active;
+
 int weston_compositor_main(int argc, char **argv)
 {
+	int rc;
+
+	if (atomic_exchange(&wwn_weston_main_active, 1)) {
+		fprintf(stderr,
+			"weston_compositor_main already running in this "
+			"process (not re-entrant). Inner weston needs a "
+			"separate process.\n");
+		return 1;
+	}
 	wwn_weston_compositor_shutdown_requested = 0;
-	return wet_main(argc, argv, NULL);
+	rc = wet_main(argc, argv, NULL);
+	atomic_store(&wwn_weston_main_active, 0);
+	return rc;
 }
 EOF
     cp ${./mobile-weston-client-launch.c} compositor/mobile-weston-client-launch.c
