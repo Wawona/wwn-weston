@@ -945,6 +945,37 @@ PY
       find "$out/lib" -type f \( -name '*backend*' -o -name '*renderer*' \) 2>/dev/null || true
       exit 1
     fi
+
+    # Nested GL weston creates wl_egl_window via LC_LOAD libwayland-egl. The
+    # toolchain dylib is the vendor stub (geometry only, no iland magic).
+    # iland's wl_egl_window_* live in libEGL.dylib (force_load of
+    # libiland_wayland_egl.a). niri already remaps that load. Without this,
+    # eglCreateWindowSurface treats the stub window as a gbm_surface and
+    # SIGBUS in gbm_surface_get_write_bo (GPU carveout).
+    echo "Remapping libwayland-egl -> @rpath/libEGL.dylib (iland Wayland-EGL)..."
+    find "$out/lib" "$out/bin" -type f \( -name '*.dylib' -o -name '*.so' \) | while read -r f; do
+      old=$(otool -L "$f" 2>/dev/null | awk '/libwayland-egl/{print $1; exit}')
+      if [ -n "$old" ] && [ "$old" != "@rpath/libEGL.dylib" ]; then
+        echo "  $f: $old"
+        install_name_tool -change "$old" @rpath/libEGL.dylib "$f"
+      fi
+    done
+    wb=$(find "$out/lib" -name 'wayland-backend.dylib' | head -1)
+    if [ -z "$wb" ]; then
+      echo "ERROR: wayland-backend.dylib missing after remap" >&2
+      exit 1
+    fi
+    if otool -L "$wb" | grep -q libwayland-egl; then
+      echo "ERROR: $wb still LC_LOADs libwayland-egl" >&2
+      otool -L "$wb" >&2
+      exit 1
+    fi
+    if ! otool -L "$wb" | grep -q 'libEGL.dylib'; then
+      echo "ERROR: $wb does not LC_LOAD libEGL.dylib" >&2
+      otool -L "$wb" >&2
+      exit 1
+    fi
+    echo "OK wayland-backend uses @rpath/libEGL.dylib"
   '';
 
   meta = with lib; {
