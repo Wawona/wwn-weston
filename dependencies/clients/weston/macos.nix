@@ -14,6 +14,7 @@ stdenv.mkDerivation rec {
   patches = [
     ./patches/0001-constraints-mark-reused-buffer-busy.patch
     ./patches/0002-wayland-backend-nested-xdg-size.patch
+    ./patches/0003-libexec-weston-libexec-dir.patch
   ];
   
   # Fetch linux input headers for macOS shim
