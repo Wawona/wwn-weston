@@ -265,7 +265,9 @@ EOF
       sym=simple_egl
       echo "CC clients/simple-egl.c (iland GL stack)"
       try_compile "clients/simple-egl.c" -Dmain="''${sym}_main" -DENABLE_EGL=1 ${glIncludeFlags} || {
-        echo "WARNING: weston-simple-egl skipped (compile failed)" >&2
+        echo "ERROR: weston-simple-egl failed to compile against the iland GL stack" >&2
+        echo "Do not skip this client. Keep upstream square size (no resize patches)." >&2
+        exit 1
       }
     fi
 

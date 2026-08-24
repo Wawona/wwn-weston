@@ -63,9 +63,11 @@ stdenv.mkDerivation rec {
     sed -i 's/\brunning;/g_simple_shm_running;/g' $out/clients/simple-shm.c
     sed -i 's/\brunning &&/g_simple_shm_running \&\&/g' $out/clients/simple-shm.c
 
-    # Do NOT inject --width/--height argv parsing. Window size is negotiated
-    # with the host compositor via xdg_toplevel (0×0 configure → client default
-    # → host adopts commit). Custom size CLI patches fought that path.
+    # Do NOT inject --width/--height argv parsing, and do NOT patch the
+    # xdg_toplevel configure handler to follow arbitrary host sizes.
+    # Upstream simple-shm prefers a 250x250 square (flower/smoke stay 200x200).
+    # Window size is negotiated via xdg_toplevel (0x0 configure → client default
+    # → host adopts commit). Host fill patches fought that path.
     awk '
       /^weston_simple_shm_main/ { in_main = 1 }
       /^\{/ && in_main {

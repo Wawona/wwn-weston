@@ -708,14 +708,10 @@ PY
             ${glIncludeFlags} ${if enableGlClients then "-I${iland}/include/GLES3" else ""} -o "$egl_obj"; then
         objs="$objs $egl_obj"
       else
-        echo "WARNING: weston-simple-egl compile failed — falling back to stub" >&2
-        egl_obj="clients_simple-egl_stub_c.o"
-        stub_src="${./simple-egl-apple-mobile-stub.c}"
-        if "$CLANG" -c "$stub_src" $CFLAGS -o "$egl_obj"; then
-          objs="$objs $egl_obj"
-        else
-          echo "WARNING: weston-simple-egl stub also failed" >&2
-        fi
+        echo "ERROR: weston-simple-egl failed to compile against iland Wayland-EGL." >&2
+        echo "Do not stub this client. Flower/smoke stay 200x200; simple-egl stays" >&2
+        echo "upstream square (250x250). Fix the winsys/headers instead." >&2
+        exit 1
       fi
     fi
 
@@ -1114,7 +1110,8 @@ PY
     weston_syms="$(nm -gj libweston-13.a 2>/dev/null || true)"
     for sym in flower_main clickdot_main smoke_main eventdemo_main resizor_main \
                cliptest_main transformed_main stacking_main dnd_main image_main \
-               scaler_main editor_main constraints_main; do
+               scaler_main editor_main constraints_main \
+               ${if enableGlClients then "simple_egl_main" else ""}; do
       if echo "$weston_syms" | grep -Fx "_''${sym}" >/dev/null; then
         echo "✓ $sym"
       else
