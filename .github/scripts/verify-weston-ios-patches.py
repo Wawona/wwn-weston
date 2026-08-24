@@ -59,12 +59,15 @@ REQUIRED_IOS_PATCH_MARKERS = [
     "wwn_mobile_pump_client_display_for_ms",
     "background_draw color",
     "output_init skipped (no shell global)",
+    "patch-cairo-util-inprocess.py",
 ]
 
 REQUIRED_COMPOSITOR_MARKERS = [
     "wwn_static_module_lookup",
     "wwn_weston_wayland_backend_init",
     "mobile-weston-client-launch.c",
+    "patch-cairo-util-inprocess.py",
+    "wayland_destroy must not cairo_debug_reset_static_data",
 ]
 
 REQUIRED_XCODEGEN_MARKERS = [

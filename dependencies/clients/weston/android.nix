@@ -219,6 +219,7 @@ EOF
     cp shared/frame.c shared/mobile-frame.c
     cp ${./terminal-patches/patch-frame-mobile.py} ./patch-frame-mobile.py
     python3 patch-frame-mobile.py shared/mobile-frame.c
+    python3 ${./terminal-patches/patch-cairo-util-inprocess.py}
 
     for s in shared/config-parser.c shared/option-parser.c shared/signal.c \
              shared/file-util.c shared/os-compatibility.c shared/process-util.c \

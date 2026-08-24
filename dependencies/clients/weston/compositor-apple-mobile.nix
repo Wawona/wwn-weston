@@ -327,6 +327,11 @@ PY
     sed -i 's/^weston_backend_init(/wwn_weston_headless_backend_init(/' libweston/backend-headless/headless.c
     sed -i 's/^wet_shell_init(/wwn_wet_desktop_shell_init(/' desktop-shell/shell.c
 
+    # In-process host: wayland_destroy must not cairo_debug_reset_static_data.
+    # Sibling terminals / pango still hold scaled fonts (SIGABRT in
+    # _cairo_hash_table_destroy). Same rationale as toytoolkit wwn #96.
+    python3 ${./terminal-patches/patch-cairo-util-inprocess.py}
+
     python3 - <<'PY'
 from pathlib import Path
 

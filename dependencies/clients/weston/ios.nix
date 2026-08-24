@@ -393,6 +393,9 @@ if old2 in text:
 path.write_text(text)
 print("Patched cairo-util.c title fonts → DejaVu Sans")
 PY
+    # In-process host: cairo-util.c.o from this archive is what nested weston
+    # links (compositor drops its copy). wayland_destroy must not reset cairo.
+    python3 ${./terminal-patches/patch-cairo-util-inprocess.py}
     for s in shared/config-parser.c shared/option-parser.c shared/signal.c \
              shared/file-util.c shared/os-compatibility.c shared/process-util.c \
              shared/hash.c shared/image-loader.c shared/cairo-util.c shared/matrix.c \
