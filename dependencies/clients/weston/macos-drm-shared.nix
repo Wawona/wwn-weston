@@ -866,7 +866,26 @@ weston_choose_default_backend(void)
 """
 if old not in text:
     raise SystemExit("compositor/main.c: weston_choose_default_backend anchor missing")
-main.write_text(text.replace(old, new, 1))
+text = text.replace(old, new, 1)
+call = "backend = weston_choose_default_backend();"
+if call not in text:
+    raise SystemExit("compositor/main.c: weston_choose_default_backend call missing")
+force = """{
+		const char *modeb = getenv("WWN_MODEB_TTY");
+		if (modeb && modeb[0] && strcmp(modeb, "0") != 0 &&
+		    backend != NULL &&
+		    (strcmp(backend, "wayland") == 0 ||
+		     strcmp(backend, "x11") == 0)) {
+			weston_log("Mode B TTY: using drm (iland), not "
+				   "--backend=%s\\n",
+				   backend);
+			backend = strdup("drm");
+		}
+	}
+	"""
+# Insert immediately before the default-backend assignment.
+text = text.replace(call, force + call, 1)
+main.write_text(text)
 
 print("patched macOS weston log init + bundled module dirs + Mode B DRM default")
 PY
