@@ -867,24 +867,36 @@ weston_choose_default_backend(void)
 if old not in text:
     raise SystemExit("compositor/main.c: weston_choose_default_backend anchor missing")
 text = text.replace(old, new, 1)
-call = "backend = weston_choose_default_backend();"
-if call not in text:
-    raise SystemExit("compositor/main.c: weston_choose_default_backend call missing")
-force = """{
-		const char *modeb = getenv("WWN_MODEB_TTY");
-		if (modeb && modeb[0] && strcmp(modeb, "0") != 0 &&
-		    backend != NULL &&
-		    (strcmp(backend, "wayland") == 0 ||
-		     strcmp(backend, "x11") == 0)) {
-			weston_log("Mode B TTY: using drm (iland), not "
-				   "--backend=%s\\n",
-				   backend);
-			backend = strdup("drm");
+after = """			if (!backends)
+				backends = weston_choose_default_backend();
 		}
 	}
-	"""
-# Insert immediately before the default-backend assignment.
-text = text.replace(call, force + call, 1)
+
+	wet.compositor = weston_compositor_create(display, log_ctx, &wet, test_data);
+"""
+force = """			if (!backends)
+				backends = weston_choose_default_backend();
+		}
+	}
+	{
+		const char *modeb = getenv("WWN_MODEB_TTY");
+		if (modeb && modeb[0] && strcmp(modeb, "0") != 0 &&
+		    backends &&
+		    (strcmp(backends, "wayland") == 0 ||
+		     strncmp(backends, "wayland,", 8) == 0 ||
+		     strcmp(backends, "x11") == 0)) {
+			weston_log("Mode B TTY: using drm (iland), not "
+				   "--backend=%s\\n",
+				   backends);
+			backends = strdup("drm");
+		}
+	}
+
+	wet.compositor = weston_compositor_create(display, log_ctx, &wet, test_data);
+"""
+if after not in text:
+    raise SystemExit("compositor/main.c: weston_choose_default_backend call missing")
+text = text.replace(after, force, 1)
 main.write_text(text)
 
 print("patched macOS weston log init + bundled module dirs + Mode B DRM default")
