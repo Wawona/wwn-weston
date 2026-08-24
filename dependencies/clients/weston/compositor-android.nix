@@ -549,15 +549,21 @@ volatile sig_atomic_t wwn_weston_compositor_shutdown_requested = 0;
 
 static atomic_int wwn_weston_main_active;
 
+int wwn_weston_compositor_is_running(void)
+{
+	return atomic_load(&wwn_weston_main_active);
+}
+
 int weston_compositor_main(int argc, char **argv)
 {
 	int rc;
 
 	if (atomic_exchange(&wwn_weston_main_active, 1)) {
 		fprintf(stderr,
-			"weston_compositor_main already running in this "
-			"process (not re-entrant). Inner weston needs a "
-			"separate process.\n");
+			"weston is already this process's compositor and "
+			"cannot nest inside itself.\n"
+			"On Android there is no second weston process. "
+			"Start niri here to nest another compositor.\n");
 		return 1;
 	}
 	wwn_weston_compositor_shutdown_requested = 0;
