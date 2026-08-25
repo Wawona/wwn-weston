@@ -12,7 +12,8 @@
 # xcodegen.nix:
 #   libweston-13.a        -> toytoolkit + demo clients (flower_main, etc.)
 #   libweston-terminal.a  -> real clients/terminal.c (Apple mobile; watchOS stub)
-#   libweston-desktop-13.a-> weston-desktop-shell client (in-process)
+#   libweston-desktop-13.a-> weston-desktop-shell client (in-process on
+#     iOS, tvOS, and watchOS; never a no-op stub)
 #   libweston-keyboard.a  -> weston-keyboard client (in-process)
 {
   lib,
@@ -792,11 +793,11 @@ PY
     # --- weston-desktop-shell -> libweston-desktop-13.a ---
     # Tablet/xdg/text-input protocols live in libweston-13.a; only add shell-specific protocol.
     desktop_objs="$(compile_only gen/weston-desktop-shell-protocol.c)"
-    if [ "${if mobile.isTVOS then "1" else "0"}" = "1" ] || [ "${if mobile.isWatchOS then "1" else "0"}" = "1" ]; then
-      cp ${./mobile-desktop-shell-stub.c} ./mobile-desktop-shell-stub.c
-      desktop_objs="$desktop_objs $(compile_only mobile-desktop-shell-stub.c -Dmain=weston_desktop_shell_main)"
-    else
-      cp clients/desktop-shell.c clients/mobile-desktop-shell.c
+    # Real in-process weston-desktop-shell on every Apple-mobile target.
+    # tvOS/watchOS used to link a main() that returned 0 immediately, so
+    # nested weston mapped an empty xdg surface and the host showed a black
+    # compositorContainer (panel, wallpaper, and launchers never ran).
+    cp clients/desktop-shell.c clients/mobile-desktop-shell.c
       python3 <<'PY'
 from pathlib import Path
 
@@ -1067,7 +1068,24 @@ panel_launcher_activate(struct panel_launcher *widget)
 {
 \tpid_t pid;
 
-\tpid = fork();"""
+\tpid = fork();
+\tif (pid < 0) {
+\t\tfprintf(stderr, "fork failed: %s\\n", strerror(errno));
+\t\treturn;
+\t}
+
+\tif (pid)
+\t\treturn;
+
+\tif (setsid() == -1)
+\t\texit(EXIT_FAILURE);
+
+\tif (execve(widget->argp[0], widget->argp, widget->envp) < 0) {
+\t\tfprintf(stderr, "execl '%s' failed: %s\\n", widget->argp[0],
+\t\t\tstrerror(errno));
+\t\texit(1);
+\t}
+}"""
     new_launcher = """static void
 panel_launcher_activate(struct panel_launcher *widget)
 {
@@ -1076,19 +1094,34 @@ panel_launcher_activate(struct panel_launcher *widget)
 \t\t      widget->path ? widget->path : "(null)",
 \t\t      widget->argp && widget->argp[0] ? widget->argp[0] : "(null)");
 \twwn_launch_panel_client(widget->argp, widget->envp);
-\treturn;
-#endif
+#else
 \tpid_t pid;
 
-\tpid = fork();"""
-    if "wwn_launch_panel_client" not in text:
-        if old_launcher not in text:
-            raise SystemExit("panel_launcher_activate anchor missing")
-        text = text.replace(old_launcher, new_launcher, 1)
+\tpid = fork();
+\tif (pid < 0) {
+\t\tfprintf(stderr, "fork failed: %s\\n", strerror(errno));
+\t\treturn;
+\t}
+
+\tif (pid)
+\t\treturn;
+
+\tif (setsid() == -1)
+\t\texit(EXIT_FAILURE);
+
+\tif (execve(widget->argp[0], widget->argp, widget->envp) < 0) {
+\t\tfprintf(stderr, "execl '%s' failed: %s\\n", widget->argp[0],
+\t\t\tstrerror(errno));
+\t\texit(1);
+\t}
+#endif
+}"""
+    if old_launcher not in text:
+        raise SystemExit("panel_launcher_activate anchor missing")
+    text = text.replace(old_launcher, new_launcher, 1)
     path.write_text(text)
 PY
-      desktop_objs="$desktop_objs $(compile_only clients/mobile-desktop-shell.c -Dmain=weston_desktop_shell_main)"
-    fi
+    desktop_objs="$desktop_objs $(compile_only clients/mobile-desktop-shell.c -Dmain=weston_desktop_shell_main)"
     "$AR" rcs libweston-desktop-13.a $desktop_objs
 
     # --- weston-keyboard -> libweston-keyboard.a ---
@@ -1125,6 +1158,11 @@ PY
     term_syms="$(nm -gj libweston-terminal.a 2>/dev/null || true)"
     if ! echo "$term_syms" | grep -Fx "_weston_terminal_main" >/dev/null; then
       echo "ERROR: missing weston_terminal_main in libweston-terminal.a" >&2
+      missing=1
+    fi
+    desktop_syms="$(nm -gj libweston-desktop-13.a 2>/dev/null || true)"
+    if ! echo "$desktop_syms" | grep -Fx "_weston_desktop_shell_main" >/dev/null; then
+      echo "ERROR: missing weston_desktop_shell_main in libweston-desktop-13.a" >&2
       missing=1
     fi
     [ "$missing" -eq 0 ] || exit 1

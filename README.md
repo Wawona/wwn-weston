@@ -76,7 +76,10 @@ Standalone `libweston_simple_shm.a` (or macOS/Linux binaries) from `dependencies
 | Wear OS | `wearos.nix` → `android.nix` | — | — | — |
 | Linux | `linux.nix` | — | — | `linux.nix` (standalone binary) |
 
-tvOS and watchOS use constrained desktop-shell stubs at the UI layer; terminal and demo clients are real ports. Desktop-shell on Android is currently a link stub; keyboard is not built on Android yet.
+tvOS and watchOS use the same in-process weston-desktop-shell as iOS (panel,
+background, launchers). fork/exec is compiled out; launchers go through
+`wwn_launch_panel_client`. Desktop-shell on Android is currently a link stub;
+keyboard is not built on Android yet.
 
 ## Patches and CI
 
