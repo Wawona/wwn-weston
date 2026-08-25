@@ -1,2 +1,3 @@
-# tvOS: shm/toytoolkit only — never ANGLE/GL (platform-targets matrix).
-args: import ./ios.nix (args // { enableGlClients = false; })
+# tvOS: same in-process weston as iOS. enableGlClients comes from Wawona
+# (allowGpu). Cited: Wawona/docs/wwn-repo-dag.md.
+args: import ./ios.nix args
