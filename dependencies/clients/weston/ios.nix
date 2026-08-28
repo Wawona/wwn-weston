@@ -75,6 +75,8 @@ let
     "-I${iland}/include -I${iland}/include/EGL -I${iland}/include/GLES2 -I${angle}/include"
   else "";
   glClientsPath = if enableGlClients then "${glClients}" else "";
+  ilandProbePath = if enableGlClients && iland != null then "${iland}" else "";
+  angleProbePath = if enableGlClients && angle != null then "${angle}" else "";
 
   pkgConfigPath = lib.concatStringsSep ":" (map (d: "${d}/lib/pkgconfig") [
     cairo pango fontconfig freetype glib harfbuzz fribidi pixman libpng
@@ -671,9 +673,15 @@ PY
 
     # Demo clients (main -> <sanitized>_main, hyphens -> underscores)
     GL_CLIENTS_OK=0
-    if [ "${if enableGlClients then "1" else "0"}" = "1" ] && [ -n "${glClientsPath}" ] && [ -f "${glClientsPath}/lib/libkmscube.a" ]; then
-      echo "GL stack probe: kmscube archive present (link verified at build time)"
-      GL_CLIENTS_OK=1
+    if [ "${if enableGlClients then "1" else "0"}" = "1" ]; then
+      if [ -n "${glClientsPath}" ] && [ -f "${glClientsPath}/lib/libkmscube.a" ]; then
+        echo "GL stack probe: kmscube archive present (link verified at build time)"
+        GL_CLIENTS_OK=1
+      elif [ -n "${ilandProbePath}" ] && [ -f "${ilandProbePath}/lib/libiland_wayland_egl.a" ] \
+           && [ -n "${angleProbePath}" ] && [ -f "${angleProbePath}/lib/libEGL.a" ]; then
+        echo "GL stack probe: iland Wayland-EGL + ANGLE present (CPU GLES / watch path)"
+        GL_CLIENTS_OK=1
+      fi
     fi
     for c in ${lib.concatStringsSep " " baseClients}; do
       sym=$(echo "$c" | tr '-' '_')
