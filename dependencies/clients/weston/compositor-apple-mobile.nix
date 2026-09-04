@@ -813,6 +813,11 @@ EOF
 #include "config.h"
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <libweston/libweston.h>
 #include "../libweston/libinput-seat.h"
 #include "../libweston/launcher-impl.h"
 
@@ -834,7 +839,7 @@ WWN_EXPORT int
 udev_input_enable(struct udev_input *input)
 {
 	(void)input;
-	return -1;
+	return 0;
 }
 
 WWN_EXPORT void
@@ -853,7 +858,9 @@ udev_input_init(struct udev_input *input, struct weston_compositor *c,
 	(void)udev;
 	(void)seat_id;
 	(void)configure_device;
-	return -1;
+	/* Own-display IOMFB: no libinput. --continue-without-input is the
+	 * client flag; DRM backend still requires udev_input_init to succeed. */
+	return 0;
 }
 
 WWN_EXPORT void
@@ -870,45 +877,77 @@ udev_seat_get_named(struct udev_input *u, const char *seat_name)
 	return NULL;
 }
 
+/* No seatd/logind on iOS. Succeed as a launcher and open DRM nodes with
+ * plain open(); iland_drm_open_compat.h routes /dev/dri/cardN. */
+struct wwn_launcher {
+	struct weston_launcher base;
+	struct weston_compositor *compositor;
+};
+
 static int
 wwn_libseat_connect(struct weston_launcher **launcher_out,
 		    struct weston_compositor *compositor, const char *seat_id,
 		    bool sync_drm)
 {
-	(void)launcher_out;
-	(void)compositor;
+	struct wwn_launcher *wl;
+
 	(void)seat_id;
 	(void)sync_drm;
-	return -1;
+	wl = calloc(1, sizeof(*wl));
+	if (!wl)
+		return -1;
+	wl->base.iface = &launcher_libseat_iface;
+	wl->compositor = compositor;
+	compositor->session_active = true;
+	wl_signal_emit(&compositor->session_signal, compositor);
+	*launcher_out = &wl->base;
+	weston_log("wwn-launcher: iOS own-display stub seat (no seatd/logind)\n");
+	return 0;
 }
 
-static void wwn_libseat_destroy(struct weston_launcher *launcher) { (void)launcher; }
-static int wwn_libseat_open(struct weston_launcher *launcher, const char *path, int flags)
+static void
+wwn_libseat_destroy(struct weston_launcher *launcher)
+{
+	struct wwn_launcher *wl = wl_container_of(launcher, wl, base);
+	free(wl);
+}
+
+static int
+wwn_libseat_open(struct weston_launcher *launcher, const char *path, int flags)
+{
+	int fd;
+
+	(void)launcher;
+	fd = open(path, flags | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	return fd;
+}
+
+static void
+wwn_libseat_close(struct weston_launcher *launcher, int fd)
 {
 	(void)launcher;
-	(void)path;
-	(void)flags;
-	return -1;
+	close(fd);
 }
-static void wwn_libseat_close(struct weston_launcher *launcher, int fd)
-{
-	(void)launcher;
-	(void)fd;
-}
-static int wwn_libseat_activate_vt(struct weston_launcher *launcher, int vt)
+
+static int
+wwn_libseat_activate_vt(struct weston_launcher *launcher, int vt)
 {
 	(void)launcher;
 	(void)vt;
-	return -1;
+	return 0;
 }
-static int wwn_libseat_get_vt(struct weston_launcher *launcher)
+
+static int
+wwn_libseat_get_vt(struct weston_launcher *launcher)
 {
 	(void)launcher;
-	return -1;
+	return -ENOSYS;
 }
 
 WWN_EXPORT const struct launcher_interface launcher_libseat_iface = {
-	.name = "libseat-stub",
+	.name = "libseat",
 	.connect = wwn_libseat_connect,
 	.destroy = wwn_libseat_destroy,
 	.open = wwn_libseat_open,
