@@ -812,12 +812,18 @@ EOF
     cat > compositor/wwn-drm-link-stubs.c <<'EOF'
 #include "config.h"
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <pthread.h>
+#include <time.h>
 #include <libweston/libweston.h>
+#include "../libweston/libweston-internal.h"
+#include "../libweston/backend.h"
 #include "../libweston/libinput-seat.h"
 #include "../libweston/launcher-impl.h"
 
@@ -826,6 +832,313 @@ EOF
 #else
 #define WWN_EXPORT
 #endif
+
+#ifndef BTN_LEFT
+#define BTN_LEFT 0x110
+#endif
+
+enum wwn_inj_kind {
+	WWN_INJ_TOUCH = 1,
+	WWN_INJ_POINTER = 2,
+	WWN_INJ_AXIS = 3,
+	WWN_INJ_CANCEL = 4,
+};
+
+struct wwn_inj {
+	uint8_t kind;
+	int8_t state;
+	int32_t id;
+	double x;
+	double y;
+	double axis_value;
+	int axis;
+};
+
+#define WWN_INJ_CAP 64
+#define WWN_SLOT_CAP 16
+
+static struct weston_compositor *g_wwn_ec;
+static struct weston_seat *g_wwn_seat;
+static struct weston_touch_device *g_wwn_touch_dev;
+static struct wl_event_source *g_wwn_inject_source;
+static int g_wwn_inject_pipe[2] = { -1, -1 };
+static pthread_mutex_t g_wwn_inj_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct wwn_inj g_wwn_inj_q[WWN_INJ_CAP];
+static unsigned g_wwn_inj_head;
+static unsigned g_wwn_inj_tail;
+static int32_t g_wwn_slots[WWN_SLOT_CAP];
+static uint8_t g_wwn_slot_used[WWN_SLOT_CAP];
+static int g_wwn_input_ready;
+static int g_wwn_pointer_down;
+
+static void
+wwn_now(struct timespec *ts)
+{
+	if (clock_gettime(CLOCK_MONOTONIC, ts) != 0)
+		memset(ts, 0, sizeof(*ts));
+}
+
+static struct weston_coord_global
+wwn_pos(double x, double y)
+{
+	struct weston_coord_global pos;
+
+	pos.c.x = x;
+	pos.c.y = y;
+	return pos;
+}
+
+static int
+wwn_slot_of(int32_t id, int alloc)
+{
+	int i;
+
+	for (i = 0; i < WWN_SLOT_CAP; i++) {
+		if (g_wwn_slot_used[i] && g_wwn_slots[i] == id)
+			return i;
+	}
+	if (!alloc)
+		return -1;
+	for (i = 0; i < WWN_SLOT_CAP; i++) {
+		if (!g_wwn_slot_used[i]) {
+			g_wwn_slot_used[i] = 1;
+			g_wwn_slots[i] = id;
+			return i;
+		}
+	}
+	return 0;
+}
+
+static void
+wwn_slot_clear(int32_t id)
+{
+	int i;
+
+	for (i = 0; i < WWN_SLOT_CAP; i++) {
+		if (g_wwn_slot_used[i] && g_wwn_slots[i] == id) {
+			g_wwn_slot_used[i] = 0;
+			g_wwn_slots[i] = 0;
+			return;
+		}
+	}
+}
+
+static void
+wwn_enqueue(struct wwn_inj ev)
+{
+	unsigned next;
+	char wake = 1;
+
+	if (!g_wwn_input_ready || g_wwn_inject_pipe[1] < 0)
+		return;
+	pthread_mutex_lock(&g_wwn_inj_lock);
+	next = (g_wwn_inj_head + 1u) % WWN_INJ_CAP;
+	if (next != g_wwn_inj_tail) {
+		g_wwn_inj_q[g_wwn_inj_head] = ev;
+		g_wwn_inj_head = next;
+	}
+	pthread_mutex_unlock(&g_wwn_inj_lock);
+	(void)write(g_wwn_inject_pipe[1], &wake, 1);
+}
+
+static void
+wwn_dispatch_one(const struct wwn_inj *ev)
+{
+	struct timespec ts;
+	struct weston_coord_global pos;
+	int slot;
+	int type;
+
+	if (!g_wwn_seat)
+		return;
+	wwn_now(&ts);
+	pos = wwn_pos(ev->x, ev->y);
+	switch (ev->kind) {
+	case WWN_INJ_TOUCH:
+		if (!g_wwn_touch_dev)
+			break;
+		if (ev->state == 0) {
+			slot = wwn_slot_of(ev->id, 0);
+			type = WL_TOUCH_UP;
+		} else if (ev->state == 1) {
+			slot = wwn_slot_of(ev->id, 1);
+			type = WL_TOUCH_DOWN;
+		} else {
+			slot = wwn_slot_of(ev->id, 0);
+			type = WL_TOUCH_MOTION;
+		}
+		if (slot < 0)
+			break;
+		notify_touch(g_wwn_touch_dev, &ts, slot, &pos, type);
+		notify_touch_frame(g_wwn_touch_dev);
+		if (ev->state == 0)
+			wwn_slot_clear(ev->id);
+		break;
+	case WWN_INJ_POINTER:
+		notify_motion_absolute(g_wwn_seat, &ts, pos);
+		if (ev->state == 1 && !g_wwn_pointer_down) {
+			notify_button(g_wwn_seat, &ts, BTN_LEFT,
+				      WL_POINTER_BUTTON_STATE_PRESSED);
+			g_wwn_pointer_down = 1;
+		} else if (ev->state == 0 && g_wwn_pointer_down) {
+			notify_button(g_wwn_seat, &ts, BTN_LEFT,
+				      WL_POINTER_BUTTON_STATE_RELEASED);
+			g_wwn_pointer_down = 0;
+		}
+		notify_pointer_frame(g_wwn_seat);
+		break;
+	case WWN_INJ_AXIS: {
+		struct weston_pointer_axis_event axis = {
+			.axis = (uint32_t)ev->axis,
+			.value = ev->axis_value,
+			.has_discrete = false,
+			.discrete = 0,
+		};
+		notify_axis(g_wwn_seat, &ts, &axis);
+		notify_pointer_frame(g_wwn_seat);
+		break;
+	}
+	case WWN_INJ_CANCEL:
+		if (g_wwn_touch_dev)
+			notify_touch_cancel(g_wwn_touch_dev);
+		if (g_wwn_pointer_down) {
+			notify_button(g_wwn_seat, &ts, BTN_LEFT,
+				      WL_POINTER_BUTTON_STATE_RELEASED);
+			g_wwn_pointer_down = 0;
+			notify_pointer_frame(g_wwn_seat);
+		}
+		memset(g_wwn_slot_used, 0, sizeof(g_wwn_slot_used));
+		break;
+	default:
+		break;
+	}
+}
+
+static int
+wwn_inject_dispatch(int fd, uint32_t mask, void *data)
+{
+	char buf[32];
+	struct wwn_inj ev;
+	int have;
+
+	(void)mask;
+	(void)data;
+	while (read(fd, buf, sizeof(buf)) > 0) {
+	}
+	for (;;) {
+		have = 0;
+		pthread_mutex_lock(&g_wwn_inj_lock);
+		if (g_wwn_inj_tail != g_wwn_inj_head) {
+			ev = g_wwn_inj_q[g_wwn_inj_tail];
+			g_wwn_inj_tail = (g_wwn_inj_tail + 1u) % WWN_INJ_CAP;
+			have = 1;
+		}
+		pthread_mutex_unlock(&g_wwn_inj_lock);
+		if (!have)
+			break;
+		wwn_dispatch_one(&ev);
+	}
+	return 0;
+}
+
+static void
+wwn_input_teardown(void)
+{
+	g_wwn_input_ready = 0;
+	if (g_wwn_inject_source) {
+		wl_event_source_remove(g_wwn_inject_source);
+		g_wwn_inject_source = NULL;
+	}
+	if (g_wwn_inject_pipe[0] >= 0) {
+		close(g_wwn_inject_pipe[0]);
+		g_wwn_inject_pipe[0] = -1;
+	}
+	if (g_wwn_inject_pipe[1] >= 0) {
+		close(g_wwn_inject_pipe[1]);
+		g_wwn_inject_pipe[1] = -1;
+	}
+	g_wwn_touch_dev = NULL;
+	if (g_wwn_seat) {
+		weston_seat_release(g_wwn_seat);
+		free(g_wwn_seat);
+		g_wwn_seat = NULL;
+	}
+	g_wwn_ec = NULL;
+	g_wwn_pointer_down = 0;
+	memset(g_wwn_slot_used, 0, sizeof(g_wwn_slot_used));
+	g_wwn_inj_head = 0;
+	g_wwn_inj_tail = 0;
+}
+
+WWN_EXPORT int
+wwn_weston_input_ready(void)
+{
+	return g_wwn_input_ready;
+}
+
+WWN_EXPORT int
+wwn_weston_logical_size(uint32_t *width, uint32_t *height)
+{
+	struct weston_output *output;
+
+	if (width)
+		*width = 0;
+	if (height)
+		*height = 0;
+	if (!g_wwn_ec)
+		return -1;
+	wl_list_for_each(output, &g_wwn_ec->output_list, link) {
+		if (width)
+			*width = (uint32_t)output->width;
+		if (height)
+			*height = (uint32_t)output->height;
+		return 0;
+	}
+	return -1;
+}
+
+WWN_EXPORT void
+wwn_weston_inject_touch(int32_t id, int state, double x, double y)
+{
+	struct wwn_inj ev = {
+		.kind = WWN_INJ_TOUCH,
+		.state = (int8_t)state,
+		.id = id,
+		.x = x,
+		.y = y,
+	};
+	wwn_enqueue(ev);
+}
+
+WWN_EXPORT void
+wwn_weston_inject_pointer(int state, double x, double y)
+{
+	struct wwn_inj ev = {
+		.kind = WWN_INJ_POINTER,
+		.state = (int8_t)state,
+		.x = x,
+		.y = y,
+	};
+	wwn_enqueue(ev);
+}
+
+WWN_EXPORT void
+wwn_weston_inject_axis(int axis, double value)
+{
+	struct wwn_inj ev = {
+		.kind = WWN_INJ_AXIS,
+		.axis = axis,
+		.axis_value = value,
+	};
+	wwn_enqueue(ev);
+}
+
+WWN_EXPORT void
+wwn_weston_inject_touch_cancel(void)
+{
+	struct wwn_inj ev = { .kind = WWN_INJ_CANCEL };
+	wwn_enqueue(ev);
+}
 
 WWN_EXPORT int
 wwn_gl_renderer_module_init(struct weston_compositor *ec)
@@ -853,13 +1166,48 @@ udev_input_init(struct udev_input *input, struct weston_compositor *c,
 		struct udev *udev, const char *seat_id,
 		udev_configure_device_t configure_device)
 {
+	struct wl_event_loop *loop;
+	struct weston_touch *touch;
+
 	(void)input;
-	(void)c;
 	(void)udev;
 	(void)seat_id;
 	(void)configure_device;
-	/* Own-display IOMFB: no libinput. --continue-without-input is the
-	 * client flag; DRM backend still requires udev_input_init to succeed. */
+	/* Own-display IOMFB: no libinput. Create a synthetic seat so UIKit
+	 * can inject wl_touch / wl_pointer on Weston's event loop. */
+	wwn_input_teardown();
+	if (!c || !c->wl_display)
+		return 0;
+	g_wwn_seat = zalloc(sizeof(*g_wwn_seat));
+	if (!g_wwn_seat)
+		return 0;
+	weston_seat_init(g_wwn_seat, c, "wwn-ios-touch");
+	(void)weston_seat_init_pointer(g_wwn_seat);
+	(void)weston_seat_init_touch(g_wwn_seat);
+	touch = weston_seat_get_touch(g_wwn_seat);
+	if (touch) {
+		g_wwn_touch_dev = weston_touch_create_touch_device(
+			touch, "wwn-ios-touchscreen", NULL, NULL);
+	}
+	if (pipe(g_wwn_inject_pipe) != 0) {
+		weston_log("wwn-ios-touch: pipe failed (%s)\n",
+			   strerror(errno));
+		wwn_input_teardown();
+		return 0;
+	}
+	fcntl(g_wwn_inject_pipe[0], F_SETFL, O_NONBLOCK);
+	fcntl(g_wwn_inject_pipe[1], F_SETFL, O_NONBLOCK);
+	loop = wl_display_get_event_loop(c->wl_display);
+	g_wwn_inject_source = wl_event_loop_add_fd(loop, g_wwn_inject_pipe[0],
+						   WL_EVENT_READABLE,
+						   wwn_inject_dispatch, NULL);
+	if (!g_wwn_inject_source) {
+		wwn_input_teardown();
+		return 0;
+	}
+	g_wwn_ec = c;
+	g_wwn_input_ready = 1;
+	weston_log("wwn-ios-touch: synthetic seat ready\n");
 	return 0;
 }
 
@@ -867,6 +1215,7 @@ WWN_EXPORT void
 udev_input_destroy(struct udev_input *input)
 {
 	(void)input;
+	wwn_input_teardown();
 }
 
 WWN_EXPORT struct udev_seat *
