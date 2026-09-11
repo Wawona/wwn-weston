@@ -598,6 +598,8 @@ compositor = compositor.replace(needle, insert, 1)
 old = "\tmodule = dlopen(path, RTLD_NOW | RTLD_NOLOAD);"
 new = """\t{
 \t\tvoid *static_init = wwn_static_module_lookup(name, entrypoint);
+\t\tif (!static_init && path)
+\t\t\tstatic_init = wwn_static_module_lookup(path, entrypoint);
 \t\tif (static_init)
 \t\t\treturn static_init;
 \t}
@@ -1936,6 +1938,14 @@ EOF
       nm -m $out/lib/libweston-compositor-13.a 2>/dev/null | grep weston_compositor_main >&2 || true
       exit 1
     fi
+    ${lib.optionalString enableIlandDrm ''
+    if ! nm -gU $out/lib/libweston-compositor-13.a 2>/dev/null \
+         | grep -E '[[:space:]]T[[:space:]]+_wwn_weston_drm_backend_init$' >/dev/null; then
+      echo "ERROR: _wwn_weston_drm_backend_init missing from libweston-compositor-13.a (enableIlandDrm)" >&2
+      nm $out/lib/libweston-compositor-13.a 2>/dev/null | grep -E 'weston_backend_init|wwn_weston_drm' >&2 || true
+      exit 1
+    fi
+    ''}
 
     cp include/wwn-static-modules.h $out/include/ 2>/dev/null || true
     runHook postInstall

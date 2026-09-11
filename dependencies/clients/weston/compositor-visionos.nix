@@ -1,1 +1,2 @@
-args: import ./compositor-apple-mobile.nix args
+# Re-export so toolchain functionArgs sees enableIlandDrm.
+import ./compositor-apple-mobile.nix

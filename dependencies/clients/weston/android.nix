@@ -304,6 +304,37 @@ EOF
     "$CC" -c gen/weston-desktop-shell-protocol.c -include "$POLYFILLS" $CFLAGS \
       -o gen_weston_desktop_shell_protocol_c.o
     cp clients/desktop-shell.c clients/mobile-desktop-shell.c
+    python3 <<'PY'
+from pathlib import Path
+p = Path("clients/mobile-desktop-shell.c")
+text = p.read_text()
+old = """\tweston_config_section_get_string(s, "background-image",
+\t\t\t\t\t &background->image, NULL);
+\tweston_config_section_get_color(s, "background-color",
+\t\t\t\t\t&background->color, 0x00000000);
+
+\tweston_config_section_get_string(s, "background-type",
+\t\t\t\t\t &type, "tile");"""
+new = """\t{
+\t\tstatic char wwn_default_bg[512];
+\t\tconst char *wwn_data = getenv("WESTON_DATA_DIR");
+\t\twwn_default_bg[0] = '\\0';
+\t\tif (wwn_data && wwn_data[0])
+\t\t\tsnprintf(wwn_default_bg, sizeof wwn_default_bg,
+\t\t\t\t "%s/background.png", wwn_data);
+\t\tweston_config_section_get_string(s, "background-image",
+\t\t\t\t\t\t &background->image,
+\t\t\t\t\t\t wwn_default_bg[0] ? wwn_default_bg : NULL);
+\t}
+\tweston_config_section_get_color(s, "background-color",
+\t\t\t\t\t&background->color, 0x00000000);
+
+\tweston_config_section_get_string(s, "background-type",
+\t\t\t\t\t &type, "scale");"""
+if old not in text:
+    raise SystemExit("android desktop-shell background-image default anchor missing")
+p.write_text(text.replace(old, new, 1))
+PY
     echo "CC clients/mobile-desktop-shell.c"
     "$CC" -c clients/mobile-desktop-shell.c -include "$POLYFILLS" $CFLAGS \
       -Dmain=weston_desktop_shell_main -o clients_mobile_desktop_shell_c.o

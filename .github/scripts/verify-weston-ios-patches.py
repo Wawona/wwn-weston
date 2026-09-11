@@ -68,6 +68,9 @@ REQUIRED_COMPOSITOR_MARKERS = [
     "mobile-weston-client-launch.c",
     "patch-cairo-util-inprocess.py",
     "wayland_destroy must not cairo_debug_reset_static_data",
+    "wwn_weston_inject_touch",
+    "wwn_weston_input_ready",
+    "synthetic seat ready",
 ]
 
 REQUIRED_XCODEGEN_MARKERS = [
